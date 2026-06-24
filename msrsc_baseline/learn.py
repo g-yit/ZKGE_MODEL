@@ -124,7 +124,7 @@ if args.do_save:
     with open(os.path.join(save_path, 'config.json'), 'w') as f:
         json.dump(vars(args), f, indent=4)
 
-data_path = "../../data"
+data_path = "../data"
 dataset = Dataset(data_path, args.dataset)
 
 import random

@@ -7,7 +7,7 @@ import numpy as np
 
 from collections import defaultdict
 
-DATA_PATH = "../../data"
+DATA_PATH = "../data"
 
 # 预处理数据 1 加载原始数据 2 映射实体和关系到ID 3 保存映射文件 4 保存映射后的数据 5 创建过滤列表 6 计算实体概率分布
 def prepare_dataset(path, name):
@@ -139,7 +139,7 @@ if __name__ == "__main__":
         try:
             prepare_dataset(
                 os.path.join(
-                    '../../src_data', d
+                    '../src_data', d
                 ),
                 d
             )
