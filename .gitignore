@@ -1,0 +1,16 @@
+data/
+.vscode/
+/code/__pycache__/
+*.pyc
+__pycache__/
+src_data/
+
+# 忽略所有 .npy 文件
+*.npy
+
+# 忽略 macOS 系统生成的隐藏文件
+*.DS_Store
+
+# 忽略所有名为 checkpoint 的文件（无后缀）和 .ckpt 后缀文件
+checkpoint
+*.ckpt
