@@ -79,7 +79,7 @@ parser.add_argument('-train', '--do_train', action='store_true')
 parser.add_argument('-test', '--do_test', action='store_true')
 parser.add_argument('-save', '--do_save', action='store_true')
 parser.add_argument('-weight', '--do_ce_weight', action='store_true', default=True)
-parser.add_argument('-path', '--save_path', type=str, default='../logs/')
+parser.add_argument('-path', '--save_path', type=str, default='./logs/')
 parser.add_argument('-id', '--model_id', type=str, default='0')
 parser.add_argument('-ckpt', '--checkpoint', type=str, default='')
 

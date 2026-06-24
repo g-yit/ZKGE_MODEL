@@ -17,7 +17,7 @@
     "do_test": false,
     "do_save": true,
     "do_ce_weight": true,
-    "save_path": "../logs/",
+    "save_path": "./logs/",
     "model_id": "aaa_uml",
     "checkpoint": "",
     "negative_sample_size": 200,
