@@ -151,8 +151,13 @@ class MSDCSE(KBCModel):
         self.num_filters = len(filter_size_list)
         self.filter_size_list = filter_size_list
         self.share = True
-        self.feature_selector = CBAMBlock(output_channel * 3, reduction=int(0.5 * output_channel * 3), kernel_size=3,
-                                          HW=400)
+        total_channel = sum(self.output_channels_list)
+        self.feature_selector = CBAMBlock(
+        total_channel,
+        reduction=max(1, int(0.5 * total_channel)),
+        kernel_size=3,
+        HW=self.reshape_H * self.reshape_W
+        )
 
         if isinstance(output_channel, int):
             self.output_channels_list = [output_channel] * self.num_filters
