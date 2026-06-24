@@ -4,8 +4,10 @@ from torch.nn import functional as F, Parameter
 import torch
 from torch import nn
 import numpy as np
+from Feature_Selector import CBAMBlock
 
-
+# self.feature_selector = CBAMBlock(output_channel * 5, reduction=int(0.5 * output_channel * 5), kernel_size=3,
+        #                                   HW=400)
 class KBCModel(nn.Module, ABC):
     def get_ranking(
             self, queries: torch.Tensor,
@@ -149,6 +151,8 @@ class MSDCSE(KBCModel):
         self.num_filters = len(filter_size_list)
         self.filter_size_list = filter_size_list
         self.share = True
+        self.feature_selector = CBAMBlock(output_channel * 3, reduction=int(0.5 * output_channel * 3), kernel_size=3,
+                                          HW=400)
 
         if isinstance(output_channel, int):
             self.output_channels_list = [output_channel] * self.num_filters
@@ -291,6 +295,7 @@ class MSDCSE(KBCModel):
             outputs.append(output)
 
         x = torch.cat(outputs, dim=1)
+        x = self.feature_selector(x)
         x = self.active_fn(x)
         x = self.feature_map_drop(x)
 
