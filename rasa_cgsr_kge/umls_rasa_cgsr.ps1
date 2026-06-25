@@ -9,7 +9,9 @@ python learn.py --dataset UMLS `
         --use_anchor --use_scale_router `
         --max_neighbors 32 --min_pmi_count 2 `
         --anchor_dropout 0.20 --anchor_pmi_weight 0.10 --anchor_hub_weight 0.03 `
+        --anchor_residual_init 0.05 --anchor_gate_bias -2.5 `
         --router_dropout 0.20 --router_temperature 1.15 --router_min_branch_weight 0.03 `
+        --router_residual_init 0.05 `
         --ce_weight_source train `
         --learning_rate 0.001 --weight_decay 0.001 `
         --factor 0.5 --patience 8 --min_lr 0.00001 `

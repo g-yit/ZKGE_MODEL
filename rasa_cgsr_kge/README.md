@@ -17,6 +17,8 @@ Both modules are disabled by default. Running `learn.py` without
 --use_scale_router    # enable context-guided branch routing
 --max_neighbors 16    # relation-balanced neighbors stored for each entity
 --ce_weight_source train
+--anchor_residual_init 0.10
+--router_residual_init 0.10
 ```
 
 `--ce_weight_source test` is the default to preserve baseline behavior, but
@@ -39,3 +41,16 @@ reciprocal triples. `models.py` stores the resulting tensors as non-persistent
 buffers, so checkpoints only contain learnable parameters. When testing a model
 trained with the new modules, pass the same module flags so the architecture is
 rebuilt before loading the checkpoint.
+
+## Residual Stabilization
+
+RASA and CGSR are initialized as small residual adapters. This keeps early
+training close to the original baseline and lets the model learn when to use
+structural context:
+
+- RASA uses `e_h^+ = e_h + lambda_a * gate * anchor`.
+- CGSR returns branch gains around 1, not direct softmax weights around `1/K`.
+
+If the new modules hurt early validation MRR, reduce
+`--anchor_residual_init` and `--router_residual_init` to `0.03` or `0.05`.
+For an ablation of direct softmax routing, use `--disable_router_residual`.

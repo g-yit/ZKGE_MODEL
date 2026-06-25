@@ -125,6 +125,10 @@ parser.add_argument("--anchor_hidden", default=0, type=int,
 parser.add_argument("--anchor_dropout", default=0.1, type=float)
 parser.add_argument("--anchor_pmi_weight", default=0.15, type=float)
 parser.add_argument("--anchor_hub_weight", default=0.05, type=float)
+parser.add_argument("--anchor_residual_init", default=0.10, type=float,
+                    help="Initial residual strength for structural anchors.")
+parser.add_argument("--anchor_gate_bias", default=-2.0, type=float,
+                    help="Initial bias of the anchor gate. Negative values keep the anchor conservative.")
 parser.add_argument("--no_anchor_prior", action="store_true",
                     help="Disable trainable relation prior for sparse/no-neighbor entities.")
 parser.add_argument("--router_hidden", default=0, type=int,
@@ -133,6 +137,10 @@ parser.add_argument("--router_dropout", default=0.1, type=float)
 parser.add_argument("--router_temperature", default=1.0, type=float)
 parser.add_argument("--router_min_branch_weight", default=0.0, type=float,
                     help="Lower bound for each branch weight, useful for stable early training.")
+parser.add_argument("--router_residual_init", default=0.10, type=float,
+                    help="Initial residual strength for branch routing.")
+parser.add_argument("--disable_router_residual", action="store_true",
+                    help="Use direct softmax branch weights instead of baseline-preserving residual gains.")
 
 args = parser.parse_args()
 
@@ -216,11 +224,15 @@ if args.model == 'MSDCSE':
         anchor_dropout=args.anchor_dropout,
         anchor_pmi_weight=args.anchor_pmi_weight,
         anchor_hub_weight=args.anchor_hub_weight,
+        anchor_residual_init=args.anchor_residual_init,
+        anchor_gate_bias=args.anchor_gate_bias,
         anchor_use_prior=not args.no_anchor_prior,
         router_hidden=args.router_hidden if args.router_hidden > 0 else None,
         router_dropout=args.router_dropout,
         router_temperature=args.router_temperature,
         router_min_branch_weight=args.router_min_branch_weight,
+        router_residual=not args.disable_router_residual,
+        router_residual_init=args.router_residual_init,
     )
     model.init()
 

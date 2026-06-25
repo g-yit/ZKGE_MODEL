@@ -9,7 +9,9 @@ python learn.py --dataset FB237 `
         --use_anchor --use_scale_router `
         --max_neighbors 24 --min_pmi_count 3 `
         --anchor_dropout 0.15 --anchor_pmi_weight 0.15 --anchor_hub_weight 0.06 `
+        --anchor_residual_init 0.08 --anchor_gate_bias -2.0 `
         --router_dropout 0.15 --router_temperature 1.00 --router_min_branch_weight 0.02 `
+        --router_residual_init 0.08 `
         --ce_weight_source train `
         --learning_rate 0.001 --weight_decay 0.0005 `
         --factor 0.5 --patience 5 --min_lr 0.00001 `

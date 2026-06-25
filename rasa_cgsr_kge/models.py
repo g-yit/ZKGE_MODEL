@@ -72,7 +72,7 @@ class RelationAwareAnchorEncoder(nn.Module):
     def __init__(
             self, num_ent, num_rel, emb_dim, graph_context, stat_dim=0,
             hidden_dim=None, dropout=0.1, pmi_weight=0.15, hub_weight=0.05,
-            use_prior=True
+            use_prior=True, residual_init=0.10, gate_bias=-2.0
     ):
         super(RelationAwareAnchorEncoder, self).__init__()
         hidden_dim = hidden_dim or emb_dim
@@ -81,6 +81,8 @@ class RelationAwareAnchorEncoder(nn.Module):
         self.pmi_weight = pmi_weight
         self.hub_weight = hub_weight
         self.use_prior = use_prior
+        residual_init = min(max(residual_init, 1e-4), 1.0 - 1e-4)
+        self.residual_logit = nn.Parameter(torch.tensor(math.log(residual_init / (1.0 - residual_init))))
 
         self.rel_query = nn.Linear(emb_dim, emb_dim, bias=False)
         self.msg_mlp = nn.Sequential(
@@ -94,6 +96,7 @@ class RelationAwareAnchorEncoder(nn.Module):
             nn.Linear(gate_in, emb_dim),
             nn.Sigmoid(),
         )
+        nn.init.constant_(self.gate[0].bias, gate_bias)
         self.norm = nn.LayerNorm(emb_dim)
         self.dropout = nn.Dropout(dropout)
         if use_prior:
@@ -161,7 +164,8 @@ class RelationAwareAnchorEncoder(nn.Module):
         else:
             gate_input = torch.cat([ent_emb, rel_emb, anchor, rel_stats], dim=-1)
         gate = self.gate(gate_input)
-        enhanced_ent = ent_emb + gate * anchor
+        residual_scale = torch.sigmoid(self.residual_logit)
+        enhanced_ent = ent_emb + residual_scale * gate * anchor
         return enhanced_ent, anchor, gate
 
 
@@ -173,13 +177,17 @@ class ContextGuidedScaleRouter(nn.Module):
     """
     def __init__(
             self, num_filters, emb_dim, stat_dim=0, hidden_dim=None,
-            dropout=0.1, temperature=1.0, min_branch_weight=0.0
+            dropout=0.1, temperature=1.0, min_branch_weight=0.0,
+            residual=True, residual_init=0.10
     ):
         super(ContextGuidedScaleRouter, self).__init__()
         hidden_dim = hidden_dim or emb_dim
         self.num_filters = num_filters
         self.temperature = temperature
         self.min_branch_weight = min_branch_weight
+        self.residual = residual
+        residual_init = min(max(residual_init, 1e-4), 1.0 - 1e-4)
+        self.residual_logit = nn.Parameter(torch.tensor(math.log(residual_init / (1.0 - residual_init))))
         in_dim = emb_dim * 3 + stat_dim
         self.router = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
@@ -198,6 +206,9 @@ class ContextGuidedScaleRouter(nn.Module):
         if self.min_branch_weight > 0:
             min_weight = min(self.min_branch_weight, 1.0 / self.num_filters - 1e-6)
             alpha = (1.0 - min_weight * self.num_filters) * alpha + min_weight
+        if self.residual:
+            residual_scale = torch.sigmoid(self.residual_logit)
+            return 1.0 + residual_scale * (alpha * self.num_filters - 1.0)
         return alpha
 
 
@@ -262,8 +273,10 @@ class MSDCSE(KBCModel):
                  use_anchor=False, use_scale_router=False, graph_context=None,
                  anchor_hidden=None, anchor_dropout=0.1, anchor_pmi_weight=0.15,
                  anchor_hub_weight=0.05, anchor_use_prior=True,
+                 anchor_residual_init=0.10, anchor_gate_bias=-2.0,
                  router_hidden=None, router_dropout=0.1, router_temperature=1.0,
-                 router_min_branch_weight=0.0):
+                 router_min_branch_weight=0.0, router_residual=True,
+                 router_residual_init=0.10):
         super(MSDCSE, self).__init__()
 
         self.embeddings = nn.ModuleList([
@@ -353,6 +366,8 @@ class MSDCSE(KBCModel):
                 pmi_weight=anchor_pmi_weight,
                 hub_weight=anchor_hub_weight,
                 use_prior=anchor_use_prior,
+                residual_init=anchor_residual_init,
+                gate_bias=anchor_gate_bias,
             )
         else:
             self.anchor_encoder = None
@@ -366,6 +381,8 @@ class MSDCSE(KBCModel):
                 dropout=router_dropout,
                 temperature=router_temperature,
                 min_branch_weight=router_min_branch_weight,
+                residual=router_residual,
+                residual_init=router_residual_init,
             )
         else:
             self.scale_router = None
