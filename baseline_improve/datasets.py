@@ -53,18 +53,27 @@ class Dataset(object):
         train_with_inv = np.vstack((train, copy)).astype("int64")
         self._build_training_cache(train_with_inv, self.n_predicates)
         return train_with_inv
-
     def get_weight(self):
-        train = self._train_with_reciprocals
-        if train is None:
-            train = self.data["train"].astype("int64")
-        appear = np.zeros(self.n_entities, dtype=np.float32)
-        for h, _, t in train:
-            appear[h] += 1.0
-            appear[t] += 1.0
-        if appear.max() <= 0:
-            return np.ones(self.n_entities, dtype=np.float32)
-        return appear / appear.max() * 0.9 + 0.1
+        appear_list = np.zeros(self.n_entities)
+        copy = np.copy(self.data['test'])
+        for triple in copy:
+            h, r, t = triple
+            appear_list[h] += 1
+            appear_list[t] += 1
+        w = appear_list / np.max(appear_list) * 0.9 + 0.1
+        # 返回的结果的结构为：[w_0, w_1, w_2, ..., w_n] n为实体数量
+        return w
+    # def get_weight(self):
+    #     train = self._train_with_reciprocals
+    #     if train is None:
+    #         train = self.data["train"].astype("int64")
+    #     appear = np.zeros(self.n_entities, dtype=np.float32)
+    #     for h, _, t in train:
+    #         appear[h] += 1.0
+    #         appear[t] += 1.0
+    #     if appear.max() <= 0:
+    #         return np.ones(self.n_entities, dtype=np.float32)
+    #     return appear / appear.max() * 0.9 + 0.1
 
     def get_frequencies(self):
         appear = np.zeros(self.n_entities, dtype=np.float32)
