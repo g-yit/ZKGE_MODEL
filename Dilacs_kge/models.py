@@ -151,13 +151,6 @@ class MSDCSE(KBCModel):
         self.num_filters = len(filter_size_list)
         self.filter_size_list = filter_size_list
         self.share = True
-        total_channel = sum(self.output_channels_list)
-        self.feature_selector = CBAMBlock(
-        total_channel,
-        reduction=max(1, int(0.5 * total_channel)),
-        kernel_size=3,
-        HW=self.reshape_H * self.reshape_W
-        )
 
         if isinstance(output_channel, int):
             self.output_channels_list = [output_channel] * self.num_filters
@@ -181,6 +174,12 @@ class MSDCSE(KBCModel):
             )
             self.conv_layers.append(conv)
         total_channel = sum(self.output_channels_list)
+        self.feature_selector = CBAMBlock(
+            total_channel,
+            reduction=max(1, int(0.5 * total_channel)),
+            kernel_size=3,
+            HW=self.reshape_H * self.reshape_W
+        )
 
         self.input_drop = torch.nn.Dropout(input_drop)
         self.hidden_drop = torch.nn.Dropout(hidden_drop)
