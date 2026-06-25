@@ -3,15 +3,16 @@ python learn.py --dataset KINSHIP `
         --regularizer NA `
         --optimizer Adam `
         --rank 400 --k_w 20 --k_h 20 --output_channel 4 `
-        --filter_size_list "[(1,3),(1,5),(3,3),(3,3,2),(3,3,3)]" `
+        --filter_size_list "[(1,3),(3,3),(1,5)]" `
         --input_drop 0.30 --hidden_drop 0.15 --feature_map_drop 0.45 `
         --active_fn "selu" --init_fn "kaiming_normal" `
         --use_anchor --use_scale_router `
         --max_neighbors 32 --min_pmi_count 2 `
         --anchor_dropout 0.18 --anchor_pmi_weight 0.12 --anchor_hub_weight 0.02 `
-        --anchor_residual_init 0.05 --anchor_gate_bias -2.5 `
+        --anchor_fusion post --module_warmup_epochs 10 --module_ramp_epochs 30 `
+        --anchor_residual_init 0.02 --anchor_gate_bias -3.0 `
         --router_dropout 0.18 --router_temperature 1.10 --router_min_branch_weight 0.03 `
-        --router_residual_init 0.05 `
+        --router_residual_init 0.02 `
         --ce_weight_source train `
         --learning_rate 0.001 --weight_decay 0.001 `
         --factor 0.5 --patience 8 --min_lr 0.00001 `

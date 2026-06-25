@@ -49,8 +49,22 @@ training close to the original baseline and lets the model learn when to use
 structural context:
 
 - RASA uses `e_h^+ = e_h + lambda_a * gate * anchor`.
+- By default, anchors are fused after the convolutional backbone through a
+  zero-initialized residual adapter. This preserves the original convolution
+  path at the start of training.
 - CGSR returns branch gains around 1, not direct softmax weights around `1/K`.
+- The recommended scripts keep the baseline three-branch backbone
+  `[(1,3),(3,3),(1,5)]`; the new modules are the only major architectural
+  change.
 
 If the new modules hurt early validation MRR, reduce
 `--anchor_residual_init` and `--router_residual_init` to `0.03` or `0.05`.
 For an ablation of direct softmax routing, use `--disable_router_residual`.
+
+For the safest baseline-preserving run, use:
+
+```bash
+--anchor_fusion post --module_warmup_epochs 5 --module_ramp_epochs 20 \
+--anchor_residual_init 0.01 --anchor_gate_bias -3.0 \
+--router_residual_init 0.01
+```

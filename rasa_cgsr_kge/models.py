@@ -274,6 +274,7 @@ class MSDCSE(KBCModel):
                  anchor_hidden=None, anchor_dropout=0.1, anchor_pmi_weight=0.15,
                  anchor_hub_weight=0.05, anchor_use_prior=True,
                  anchor_residual_init=0.10, anchor_gate_bias=-2.0,
+                 anchor_fusion='post', module_warmup_epochs=0, module_ramp_epochs=1,
                  router_hidden=None, router_dropout=0.1, router_temperature=1.0,
                  router_min_branch_weight=0.0, router_residual=True,
                  router_residual_init=0.10):
@@ -310,6 +311,12 @@ class MSDCSE(KBCModel):
         self.share = True
         self.use_anchor = use_anchor
         self.use_scale_router = use_scale_router
+        self.anchor_fusion = anchor_fusion
+        if self.anchor_fusion not in ['pre', 'post', 'both']:
+            raise ValueError("anchor_fusion must be one of: pre, post, both")
+        self.module_warmup_epochs = module_warmup_epochs
+        self.module_ramp_epochs = max(1, module_ramp_epochs)
+        self.current_epoch = 0
 
         if isinstance(output_channel, int):
             self.output_channels_list = [output_channel] * self.num_filters
@@ -372,6 +379,19 @@ class MSDCSE(KBCModel):
         else:
             self.anchor_encoder = None
 
+        if self.use_anchor and self.anchor_fusion in ['post', 'both']:
+            post_in_dim = embedding_dim * 3 + self.stat_dim
+            self.anchor_post_adapter = nn.Sequential(
+                nn.Linear(post_in_dim, anchor_hidden or embedding_dim),
+                nn.ReLU(),
+                nn.Dropout(anchor_dropout),
+                nn.Linear(anchor_hidden or embedding_dim, embedding_dim),
+            )
+            nn.init.zeros_(self.anchor_post_adapter[-1].weight)
+            nn.init.zeros_(self.anchor_post_adapter[-1].bias)
+        else:
+            self.anchor_post_adapter = None
+
         if self.use_scale_router:
             self.scale_router = ContextGuidedScaleRouter(
                 num_filters=self.num_filters,
@@ -386,6 +406,17 @@ class MSDCSE(KBCModel):
             )
         else:
             self.scale_router = None
+
+    def set_epoch(self, epoch):
+        self.current_epoch = epoch
+
+    def get_module_scale(self):
+        if not self.training:
+            return 1.0
+        if self.current_epoch < self.module_warmup_epochs:
+            return 0.0
+        progress = (self.current_epoch - self.module_warmup_epochs + 1) / float(self.module_ramp_epochs)
+        return min(1.0, max(0.0, progress))
 
     # ===================== 工具方法 =====================
     def to_var(self, x, use_gpu=True):
@@ -490,6 +521,12 @@ class MSDCSE(KBCModel):
                 e1, rel, e1_embedded, rel_embedded,
                 self.emb_ent, self.emb_rel, rel_stats=rel_stats
             )
+            if self.anchor_fusion == 'post':
+                e1_contextual = e1_embedded
+            else:
+                module_scale = self.get_module_scale()
+                if module_scale != 1.0:
+                    e1_contextual = e1_embedded + module_scale * (e1_contextual - e1_embedded)
         else:
             e1_contextual = e1_embedded
 
@@ -507,6 +544,9 @@ class MSDCSE(KBCModel):
 
         if self.scale_router is not None:
             alpha = self.scale_router(rel_embedded, anchor, rel_stats=rel_stats)
+            module_scale = self.get_module_scale()
+            if isinstance(module_scale, float) and module_scale != 1.0:
+                alpha = 1.0 + module_scale * (alpha - 1.0)
             outputs = [
                 output * alpha[:, i].view(-1, 1, 1, 1)
                 for i, output in enumerate(outputs)
@@ -521,4 +561,13 @@ class MSDCSE(KBCModel):
         x = self.hidden_drop(x)
         x = self.bn2(x)
         x = self.active_fn(x)
+
+        if self.anchor_post_adapter is not None:
+            module_scale = self.get_module_scale()
+            if module_scale != 0:
+                if rel_stats is None:
+                    post_input = torch.cat([x, rel_embedded, anchor], dim=-1)
+                else:
+                    post_input = torch.cat([x, rel_embedded, anchor, rel_stats], dim=-1)
+                x = x + module_scale * self.anchor_post_adapter(post_input)
         return x, e1_embedded, rel_embedded

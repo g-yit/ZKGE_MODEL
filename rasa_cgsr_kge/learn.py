@@ -129,6 +129,12 @@ parser.add_argument("--anchor_residual_init", default=0.10, type=float,
                     help="Initial residual strength for structural anchors.")
 parser.add_argument("--anchor_gate_bias", default=-2.0, type=float,
                     help="Initial bias of the anchor gate. Negative values keep the anchor conservative.")
+parser.add_argument("--anchor_fusion", choices=['pre', 'post', 'both'], default='post',
+                    help="Where structural anchors are fused: before convolution, after projection, or both.")
+parser.add_argument("--module_warmup_epochs", default=0, type=int,
+                    help="Epochs during which new modules are identity-preserving.")
+parser.add_argument("--module_ramp_epochs", default=1, type=int,
+                    help="Epochs used to ramp new module strength after warmup.")
 parser.add_argument("--no_anchor_prior", action="store_true",
                     help="Disable trainable relation prior for sparse/no-neighbor entities.")
 parser.add_argument("--router_hidden", default=0, type=int,
@@ -226,6 +232,9 @@ if args.model == 'MSDCSE':
         anchor_hub_weight=args.anchor_hub_weight,
         anchor_residual_init=args.anchor_residual_init,
         anchor_gate_bias=args.anchor_gate_bias,
+        anchor_fusion=args.anchor_fusion,
+        module_warmup_epochs=args.module_warmup_epochs,
+        module_ramp_epochs=args.module_ramp_epochs,
         anchor_use_prior=not args.no_anchor_prior,
         router_hidden=args.router_hidden if args.router_hidden > 0 else None,
         router_dropout=args.router_dropout,
