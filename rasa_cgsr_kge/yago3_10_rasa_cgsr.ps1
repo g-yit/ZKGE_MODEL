@@ -1,0 +1,18 @@
+python learn.py --dataset YAGO3-10 `
+        --model MSDCSE `
+        --regularizer NA `
+        --optimizer Adam `
+        --rank 400 --k_w 20 --k_h 20 --output_channel 4 `
+        --filter_size_list "[(1,3),(1,5),(3,3),(3,3,2),(3,3,3)]" `
+        --input_drop 0.30 --hidden_drop 0.20 --feature_map_drop 0.35 `
+        --active_fn "selu" --init_fn "kaiming_normal" `
+        --use_anchor --use_scale_router `
+        --max_neighbors 16 --min_pmi_count 5 `
+        --anchor_dropout 0.10 --anchor_pmi_weight 0.18 --anchor_hub_weight 0.12 `
+        --router_dropout 0.10 --router_temperature 0.90 --router_min_branch_weight 0.02 `
+        --ce_weight_source train `
+        --learning_rate 0.0007 --weight_decay 0.0003 `
+        --factor 0.5 --patience 4 --min_lr 0.00001 `
+        --valid 5 --max_epochs 150 --batch_size 256 `
+        --seed 42 --verbose 1 `
+        -train -save -id yago3_10_rasa_cgsr

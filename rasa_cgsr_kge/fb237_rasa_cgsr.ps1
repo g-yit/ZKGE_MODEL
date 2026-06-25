@@ -1,0 +1,18 @@
+python learn.py --dataset FB237 `
+        --model MSDCSE `
+        --regularizer NA `
+        --optimizer Adam `
+        --rank 400 --k_w 20 --k_h 20 --output_channel 6 `
+        --filter_size_list "[(1,3),(1,5),(3,3),(3,3,2),(3,3,3)]" `
+        --input_drop 0.35 --hidden_drop 0.20 --feature_map_drop 0.40 `
+        --active_fn "selu" --init_fn "kaiming_normal" `
+        --use_anchor --use_scale_router `
+        --max_neighbors 24 --min_pmi_count 3 `
+        --anchor_dropout 0.15 --anchor_pmi_weight 0.15 --anchor_hub_weight 0.06 `
+        --router_dropout 0.15 --router_temperature 1.00 --router_min_branch_weight 0.02 `
+        --ce_weight_source train `
+        --learning_rate 0.001 --weight_decay 0.0005 `
+        --factor 0.5 --patience 5 --min_lr 0.00001 `
+        --valid 5 --max_epochs 200 --batch_size 512 `
+        --seed 42 --verbose 1 `
+        -train -save -id fb237_rasa_cgsr
