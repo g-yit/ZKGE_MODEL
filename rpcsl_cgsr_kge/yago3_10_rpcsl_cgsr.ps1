@@ -1,0 +1,20 @@
+python learn.py --dataset YAGO3-10 `
+        --model MSDCSE `
+        --regularizer NA `
+        --optimizer Adam `
+        --rank 400 --k_w 20 --k_h 20 --output_channel 4 `
+        --filter_size_list "[(1,3),(3,3),(1,5)]" `
+        --input_drop 0.30 --hidden_drop 0.20 --feature_map_drop 0.35 `
+        --active_fn "selu" --init_fn "kaiming_normal" `
+        --use_scale_router `
+        --router_dropout 0.10 --router_temperature 1.00 --router_min_branch_weight 0.02 `
+        --use_rpcsl --rpcsl_max_pos 16 `
+        --rpcsl_eps_min 0.00 --rpcsl_eps_max 0.15 `
+        --rpcsl_eps_tph_weight 0.06 --rpcsl_eps_entropy_weight 0.06 --rpcsl_eps_multi_weight 0.05 `
+        --rpcsl_strength 0.80 --rpcsl_warmup_epochs 2 --rpcsl_ramp_epochs 10 `
+        --ce_weight_source train `
+        --learning_rate 0.0007 --weight_decay 0.0003 `
+        --factor 0.5 --patience 4 --min_lr 0.00001 `
+        --valid 5 --max_epochs 150 --batch_size 256 `
+        --seed 42 --verbose 1 `
+        -train -save -id yago3_10_rpcsl_cgsr
