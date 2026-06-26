@@ -61,124 +61,16 @@ class SELayer(nn.Module):
         return x * y
 
 
-class RelationAwareAnchorEncoder(nn.Module):
-    """
-    Relation-aware structural anchor encoder.
-
-    For each query (h, r, ?), the module reads a fixed-size neighborhood table
-    for h and lets the current relation select useful neighboring evidence.
-    The resulting anchor is fused into the head embedding before convolution.
-    """
-    def __init__(
-            self, num_ent, num_rel, emb_dim, graph_context, stat_dim=0,
-            hidden_dim=None, dropout=0.1, pmi_weight=0.15, hub_weight=0.05,
-            use_prior=True, residual_init=0.10, gate_bias=-2.0
-    ):
-        super(RelationAwareAnchorEncoder, self).__init__()
-        hidden_dim = hidden_dim or emb_dim
-        self.emb_dim = emb_dim
-        self.stat_dim = stat_dim
-        self.pmi_weight = pmi_weight
-        self.hub_weight = hub_weight
-        self.use_prior = use_prior
-        residual_init = min(max(residual_init, 1e-4), 1.0 - 1e-4)
-        self.residual_logit = nn.Parameter(torch.tensor(math.log(residual_init / (1.0 - residual_init))))
-
-        self.rel_query = nn.Linear(emb_dim, emb_dim, bias=False)
-        self.msg_mlp = nn.Sequential(
-            nn.Linear(emb_dim * 3, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, emb_dim),
-        )
-        gate_in = emb_dim * 3 + stat_dim
-        self.gate = nn.Sequential(
-            nn.Linear(gate_in, emb_dim),
-            nn.Sigmoid(),
-        )
-        nn.init.constant_(self.gate[0].bias, gate_bias)
-        self.norm = nn.LayerNorm(emb_dim)
-        self.dropout = nn.Dropout(dropout)
-        if use_prior:
-            self.rel_prior = nn.Embedding(num_rel, emb_dim)
-        else:
-            self.rel_prior = None
-
-        self.register_buffer(
-            'neighbor_entities',
-            graph_context['neighbor_entities'].long(),
-            persistent=False
-        )
-        self.register_buffer(
-            'neighbor_relations',
-            graph_context['neighbor_relations'].long(),
-            persistent=False
-        )
-        self.register_buffer(
-            'neighbor_mask',
-            graph_context['neighbor_mask'].float(),
-            persistent=False
-        )
-        self.register_buffer(
-            'rel_pair_pmi',
-            graph_context['rel_pair_pmi'].float(),
-            persistent=False
-        )
-        self.register_buffer(
-            'entity_log_degree',
-            graph_context['entity_log_degree'].float(),
-            persistent=False
-        )
-
-    def forward(self, ent_ids, rel_ids, ent_emb, rel_emb, ent_embedding, rel_embedding, rel_stats=None):
-        neigh_ent = self.neighbor_entities[ent_ids]
-        neigh_rel = self.neighbor_relations[ent_ids]
-        mask = self.neighbor_mask[ent_ids]
-
-        neigh_ent_emb = ent_embedding(neigh_ent)
-        neigh_rel_emb = rel_embedding(neigh_rel)
-
-        rel_query = self.rel_query(rel_emb).unsqueeze(1)
-        scores = torch.sum(rel_query * neigh_rel_emb, dim=-1) / math.sqrt(self.emb_dim)
-
-        if self.pmi_weight != 0:
-            scores = scores + self.pmi_weight * self.rel_pair_pmi[rel_ids.unsqueeze(1), neigh_rel]
-        if self.hub_weight != 0:
-            scores = scores - self.hub_weight * self.entity_log_degree[neigh_ent]
-
-        scores = scores.masked_fill(mask <= 0, -1e9)
-        attn = torch.softmax(scores, dim=1) * mask
-        attn = attn / attn.sum(dim=1, keepdim=True).clamp_min(1e-9)
-
-        msg = self.msg_mlp(torch.cat([neigh_ent_emb, neigh_rel_emb, neigh_ent_emb * neigh_rel_emb], dim=-1))
-        anchor = torch.sum(attn.unsqueeze(-1) * msg, dim=1)
-
-        has_neighbor = (mask.sum(dim=1, keepdim=True) > 0).float()
-        if self.rel_prior is not None:
-            prior = self.rel_prior(rel_ids)
-            anchor = has_neighbor * anchor + (1.0 - has_neighbor) * prior
-        anchor = self.dropout(self.norm(anchor))
-
-        if rel_stats is None:
-            gate_input = torch.cat([ent_emb, rel_emb, anchor], dim=-1)
-        else:
-            gate_input = torch.cat([ent_emb, rel_emb, anchor, rel_stats], dim=-1)
-        gate = self.gate(gate_input)
-        residual_scale = torch.sigmoid(self.residual_logit)
-        enhanced_ent = ent_emb + residual_scale * gate * anchor
-        return enhanced_ent, anchor, gate
-
-
 class ContextGuidedScaleRouter(nn.Module):
     """
     Produces query-specific weights for multi-scale convolution branches.
-    The router is driven by relation semantics, structural anchor, and
-    precomputed relation-pattern statistics.
+    The router is driven by relation semantics and precomputed
+    relation-pattern statistics.
     """
     def __init__(
             self, num_filters, emb_dim, stat_dim=0, hidden_dim=None,
             dropout=0.1, temperature=1.0, min_branch_weight=0.0,
-            residual=True, residual_init=0.10
+            residual=False, residual_init=0.10
     ):
         super(ContextGuidedScaleRouter, self).__init__()
         hidden_dim = hidden_dim or emb_dim
@@ -188,7 +80,7 @@ class ContextGuidedScaleRouter(nn.Module):
         self.residual = residual
         residual_init = min(max(residual_init, 1e-4), 1.0 - 1e-4)
         self.residual_logit = nn.Parameter(torch.tensor(math.log(residual_init / (1.0 - residual_init))))
-        in_dim = emb_dim * 3 + stat_dim
+        in_dim = emb_dim + stat_dim
         self.router = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
             nn.ReLU(),
@@ -196,11 +88,11 @@ class ContextGuidedScaleRouter(nn.Module):
             nn.Linear(hidden_dim, num_filters),
         )
 
-    def forward(self, rel_emb, anchor, rel_stats=None):
+    def forward(self, rel_emb, rel_stats=None):
         if rel_stats is None:
-            route_input = torch.cat([rel_emb, anchor, rel_emb * anchor], dim=-1)
+            route_input = rel_emb
         else:
-            route_input = torch.cat([rel_emb, anchor, rel_emb * anchor, rel_stats], dim=-1)
+            route_input = torch.cat([rel_emb, rel_stats], dim=-1)
         logits = self.router(route_input) / max(self.temperature, 1e-6)
         alpha = torch.softmax(logits, dim=-1)
         if self.min_branch_weight > 0:
@@ -270,13 +162,10 @@ class MSDCSE(KBCModel):
                  k_w=10, k_h=20, output_channel=20,
                  filter_size_list=[(1, 5), (3, 3), (1, 9)],
                  active_fn='relu', init_fn='xavier_normal', ce_weight=None,
-                 use_anchor=False, use_scale_router=False, graph_context=None,
-                 anchor_hidden=None, anchor_dropout=0.1, anchor_pmi_weight=0.15,
-                 anchor_hub_weight=0.05, anchor_use_prior=True,
-                 anchor_residual_init=0.10, anchor_gate_bias=-2.0,
-                 anchor_fusion='post', module_warmup_epochs=0, module_ramp_epochs=1,
+                 use_scale_router=False, relation_context=None,
+                 module_warmup_epochs=0, module_ramp_epochs=1,
                  router_hidden=None, router_dropout=0.1, router_temperature=1.0,
-                 router_min_branch_weight=0.0, router_residual=True,
+                 router_min_branch_weight=0.0, router_residual=False,
                  router_residual_init=0.10):
         super(MSDCSE, self).__init__()
 
@@ -309,11 +198,7 @@ class MSDCSE(KBCModel):
         self.num_filters = len(filter_size_list)
         self.filter_size_list = filter_size_list
         self.share = True
-        self.use_anchor = use_anchor
         self.use_scale_router = use_scale_router
-        self.anchor_fusion = anchor_fusion
-        if self.anchor_fusion not in ['pre', 'post', 'both']:
-            raise ValueError("anchor_fusion must be one of: pre, post, both")
         self.module_warmup_epochs = module_warmup_epochs
         self.module_ramp_epochs = max(1, module_ramp_epochs)
         self.current_epoch = 0
@@ -352,45 +237,12 @@ class MSDCSE(KBCModel):
         self.register_parameter('b', Parameter(torch.zeros(num_ent)))
 
         self.stat_dim = 0
-        if graph_context is not None and 'rel_stats' in graph_context:
-            rel_stats = graph_context['rel_stats'].float()
+        if relation_context is not None and 'rel_stats' in relation_context:
+            rel_stats = relation_context['rel_stats'].float()
             self.stat_dim = rel_stats.shape[1]
             self.register_buffer('rel_stats', rel_stats, persistent=False)
         else:
             self.register_buffer('rel_stats', torch.empty(num_rel, 0), persistent=False)
-
-        if self.use_anchor:
-            if graph_context is None:
-                raise ValueError("use_anchor=True requires graph_context from Dataset.build_graph_context().")
-            self.anchor_encoder = RelationAwareAnchorEncoder(
-                num_ent=num_ent,
-                num_rel=num_rel,
-                emb_dim=embedding_dim,
-                graph_context=graph_context,
-                stat_dim=self.stat_dim,
-                hidden_dim=anchor_hidden,
-                dropout=anchor_dropout,
-                pmi_weight=anchor_pmi_weight,
-                hub_weight=anchor_hub_weight,
-                use_prior=anchor_use_prior,
-                residual_init=anchor_residual_init,
-                gate_bias=anchor_gate_bias,
-            )
-        else:
-            self.anchor_encoder = None
-
-        if self.use_anchor and self.anchor_fusion in ['post', 'both']:
-            post_in_dim = embedding_dim * 3 + self.stat_dim
-            self.anchor_post_adapter = nn.Sequential(
-                nn.Linear(post_in_dim, anchor_hidden or embedding_dim),
-                nn.ReLU(),
-                nn.Dropout(anchor_dropout),
-                nn.Linear(anchor_hidden or embedding_dim, embedding_dim),
-            )
-            nn.init.zeros_(self.anchor_post_adapter[-1].weight)
-            nn.init.zeros_(self.anchor_post_adapter[-1].bias)
-        else:
-            self.anchor_post_adapter = None
 
         if self.use_scale_router:
             self.scale_router = ContextGuidedScaleRouter(
@@ -514,23 +366,7 @@ class MSDCSE(KBCModel):
         e1_embedded = self.emb_ent(e1)
         rel_embedded = self.emb_rel(rel)
         rel_stats = self.rel_stats[rel] if self.rel_stats.numel() > 0 else None
-        anchor = torch.zeros_like(e1_embedded)
-
-        if self.anchor_encoder is not None:
-            e1_contextual, anchor, _ = self.anchor_encoder(
-                e1, rel, e1_embedded, rel_embedded,
-                self.emb_ent, self.emb_rel, rel_stats=rel_stats
-            )
-            if self.anchor_fusion == 'post':
-                e1_contextual = e1_embedded
-            else:
-                module_scale = self.get_module_scale()
-                if module_scale != 1.0:
-                    e1_contextual = e1_embedded + module_scale * (e1_contextual - e1_embedded)
-        else:
-            e1_contextual = e1_embedded
-
-        comb_emb = torch.cat([e1_contextual, rel_embedded], dim=1)
+        comb_emb = torch.cat([e1_embedded, rel_embedded], dim=1)
         chequer_perm = comb_emb[:, self.chequer_perm]
         stack_inp = chequer_perm.reshape((-1, self.perm, 2 * self.k_w, self.k_h))
         x = self.bn0(stack_inp)
@@ -543,7 +379,7 @@ class MSDCSE(KBCModel):
             outputs.append(output)
 
         if self.scale_router is not None:
-            alpha = self.scale_router(rel_embedded, anchor, rel_stats=rel_stats)
+            alpha = self.scale_router(rel_embedded, rel_stats=rel_stats)
             module_scale = self.get_module_scale()
             if isinstance(module_scale, float) and module_scale != 1.0:
                 alpha = 1.0 + module_scale * (alpha - 1.0)
@@ -561,13 +397,4 @@ class MSDCSE(KBCModel):
         x = self.hidden_drop(x)
         x = self.bn2(x)
         x = self.active_fn(x)
-
-        if self.anchor_post_adapter is not None:
-            module_scale = self.get_module_scale()
-            if module_scale != 0:
-                if rel_stats is None:
-                    post_input = torch.cat([x, rel_embedded, anchor], dim=-1)
-                else:
-                    post_input = torch.cat([x, rel_embedded, anchor, rel_stats], dim=-1)
-                x = x + module_scale * self.anchor_post_adapter(post_input)
         return x, e1_embedded, rel_embedded

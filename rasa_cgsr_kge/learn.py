@@ -111,32 +111,13 @@ parser.add_argument("--init_fn", default="xavier_normal", help="initialization f
 parser.add_argument("--filter_size_list", default=[(1, 5, 1, 2), (3, 3), (1, 9)],
                     help="卷积列表，格式为[(h,w,dh,dw),(h,w),(h,w)]")
 
-# Relation-aware structural anchor and context-guided scale routing
-parser.add_argument("--use_anchor", action="store_true",
-                    help="Enable relation-aware structural anchor enhancement.")
+# Context-guided scale routing
 parser.add_argument("--use_scale_router", action="store_true",
                     help="Enable context-guided scale routing over convolution branches.")
-parser.add_argument("--max_neighbors", default=16, type=int,
-                    help="Maximum relation-balanced neighbors stored for each entity.")
-parser.add_argument("--min_pmi_count", default=2, type=int,
-                    help="Minimum relation co-occurrence count used for positive PMI.")
-parser.add_argument("--anchor_hidden", default=0, type=int,
-                    help="Hidden size of the anchor encoder; 0 means embedding_dim.")
-parser.add_argument("--anchor_dropout", default=0.1, type=float)
-parser.add_argument("--anchor_pmi_weight", default=0.15, type=float)
-parser.add_argument("--anchor_hub_weight", default=0.05, type=float)
-parser.add_argument("--anchor_residual_init", default=0.10, type=float,
-                    help="Initial residual strength for structural anchors.")
-parser.add_argument("--anchor_gate_bias", default=-2.0, type=float,
-                    help="Initial bias of the anchor gate. Negative values keep the anchor conservative.")
-parser.add_argument("--anchor_fusion", choices=['pre', 'post', 'both'], default='post',
-                    help="Where structural anchors are fused: before convolution, after projection, or both.")
 parser.add_argument("--module_warmup_epochs", default=0, type=int,
                     help="Epochs during which new modules are identity-preserving.")
 parser.add_argument("--module_ramp_epochs", default=1, type=int,
                     help="Epochs used to ramp new module strength after warmup.")
-parser.add_argument("--no_anchor_prior", action="store_true",
-                    help="Disable trainable relation prior for sparse/no-neighbor entities.")
 parser.add_argument("--router_hidden", default=0, type=int,
                     help="Hidden size of the scale router; 0 means embedding_dim.")
 parser.add_argument("--router_dropout", default=0.1, type=float)
@@ -145,8 +126,8 @@ parser.add_argument("--router_min_branch_weight", default=0.0, type=float,
                     help="Lower bound for each branch weight, useful for stable early training.")
 parser.add_argument("--router_residual_init", default=0.10, type=float,
                     help="Initial residual strength for branch routing.")
-parser.add_argument("--disable_router_residual", action="store_true",
-                    help="Use direct softmax branch weights instead of baseline-preserving residual gains.")
+parser.add_argument("--use_router_residual", action="store_true",
+                    help="Use baseline-preserving residual branch gains instead of direct softmax weights.")
 
 args = parser.parse_args()
 
@@ -203,12 +184,7 @@ def parse_list_argument(value):
 
 if args.model == 'MSDCSE':
     filter_size_list = parse_list_argument(args.filter_size_list) if isinstance(args.filter_size_list, str) else args.filter_size_list
-    graph_context = None
-    if args.use_anchor or args.use_scale_router:
-        graph_context = dataset.build_graph_context(
-            max_neighbors=args.max_neighbors,
-            min_pmi_count=args.min_pmi_count,
-        )
+    relation_context = dataset.build_relation_context() if args.use_scale_router else None
     model = MSDCSE(
         num_ent=dataset.get_shape()[0],
         num_rel=dataset.get_shape()[1],
@@ -223,24 +199,15 @@ if args.model == 'MSDCSE':
         active_fn=args.active_fn,
         init_fn=args.init_fn,
         ce_weight=ce_weight,
-        use_anchor=args.use_anchor,
         use_scale_router=args.use_scale_router,
-        graph_context=graph_context,
-        anchor_hidden=args.anchor_hidden if args.anchor_hidden > 0 else None,
-        anchor_dropout=args.anchor_dropout,
-        anchor_pmi_weight=args.anchor_pmi_weight,
-        anchor_hub_weight=args.anchor_hub_weight,
-        anchor_residual_init=args.anchor_residual_init,
-        anchor_gate_bias=args.anchor_gate_bias,
-        anchor_fusion=args.anchor_fusion,
+        relation_context=relation_context,
         module_warmup_epochs=args.module_warmup_epochs,
         module_ramp_epochs=args.module_ramp_epochs,
-        anchor_use_prior=not args.no_anchor_prior,
         router_hidden=args.router_hidden if args.router_hidden > 0 else None,
         router_dropout=args.router_dropout,
         router_temperature=args.router_temperature,
         router_min_branch_weight=args.router_min_branch_weight,
-        router_residual=not args.disable_router_residual,
+        router_residual=args.use_router_residual,
         router_residual_init=args.router_residual_init,
     )
     model.init()

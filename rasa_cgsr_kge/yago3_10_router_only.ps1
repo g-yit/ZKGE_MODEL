@@ -6,16 +6,11 @@ python learn.py --dataset YAGO3-10 `
         --filter_size_list "[(1,3),(3,3),(1,5)]" `
         --input_drop 0.30 --hidden_drop 0.20 --feature_map_drop 0.35 `
         --active_fn "selu" --init_fn "kaiming_normal" `
-        --use_anchor --use_scale_router `
-        --max_neighbors 16 --min_pmi_count 5 `
-        --anchor_dropout 0.10 --anchor_pmi_weight 0.18 --anchor_hub_weight 0.12 `
-        --anchor_fusion post --module_warmup_epochs 3 --module_ramp_epochs 20 `
-        --anchor_residual_init 0.03 --anchor_gate_bias -2.8 `
-        --router_dropout 0.10 --router_temperature 0.90 --router_min_branch_weight 0.02 `
-        --router_residual_init 0.03 `
+        --use_scale_router `
+        --router_dropout 0.10 --router_temperature 1.00 --router_min_branch_weight 0.02 `
         --ce_weight_source train `
         --learning_rate 0.0007 --weight_decay 0.0003 `
         --factor 0.5 --patience 4 --min_lr 0.00001 `
         --valid 5 --max_epochs 150 --batch_size 256 `
         --seed 42 --verbose 1 `
-        -train -save -id yago3_10_rasa_cgsr
+        -train -save -id yago3_10_router_only

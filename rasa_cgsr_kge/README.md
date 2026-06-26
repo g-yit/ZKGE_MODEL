@@ -1,24 +1,24 @@
-# RASA-CGSR KGE
+# CGSR-KGE
 
 This folder is copied from `msrsc_baseline` and keeps the original baseline
-files untouched. The new code adds two optional modules to `MSDCSE`:
+files untouched. The current version keeps only the validated module:
 
-- RASA: relation-aware structural anchor enhancement.
 - CGSR: context-guided scale routing for multi-scale relation-specific
   convolution branches.
 
-Both modules are disabled by default. Running `learn.py` without
-`--use_anchor` and `--use_scale_router` follows the original baseline path.
+Running `learn.py` without `--use_scale_router` follows the original baseline
+path. Enabling `--use_scale_router` adds a residual branch router driven by
+relation embeddings and relation-pattern statistics.
 
 ## Main Switches
 
 ```bash
---use_anchor          # enable relation-aware structural anchor
---use_scale_router    # enable context-guided branch routing
---max_neighbors 16    # relation-balanced neighbors stored for each entity
+--use_scale_router
+--router_temperature 1.0
+--router_min_branch_weight 0.02
+--module_warmup_epochs 0
+--module_ramp_epochs 1
 --ce_weight_source train
---anchor_residual_init 0.10
---router_residual_init 0.10
 ```
 
 `--ce_weight_source test` is the default to preserve baseline behavior, but
@@ -26,45 +26,24 @@ the provided scripts use `train` to avoid using test-set statistics.
 
 ## Recommended Scripts
 
-- `wn18rr_rasa_cgsr.ps1`: sparse graph, stronger PMI/hub correction.
-- `fb237_rasa_cgsr.ps1`: relation-rich graph, larger neighbor budget.
-- `yago3_10_rasa_cgsr.ps1`: large graph with strong hubs, conservative batch
-  size and stronger hub penalty.
-- `umls_rasa_cgsr.ps1`: dense small graph, stronger dropout.
-- `kinship_rasa_cgsr.ps1`: dense small graph dominated by N-N relations,
-  stronger dropout and smoother routing.
+- `wn18rr_router_only.ps1`
+- `fb237_router_only.ps1`
+- `yago3_10_router_only.ps1`
+- `umls_router_only.ps1`
+- `kinship_router_only.ps1`
 
 ## Implementation Notes
 
-`datasets.py` builds graph context only from training triples and their
-reciprocal triples. `models.py` stores the resulting tensors as non-persistent
-buffers, so checkpoints only contain learnable parameters. When testing a model
-trained with the new modules, pass the same module flags so the architecture is
-rebuilt before loading the checkpoint.
+`datasets.py` builds relation statistics only from training triples and their
+reciprocal triples. The router receives:
 
-## Residual Stabilization
+- relation frequency;
+- tails-per-head and heads-per-tail;
+- head/tail entropy;
+- 1-1, 1-N, N-1, N-N relation type indicators;
+- inverse-relation indicator.
 
-RASA and CGSR are initialized as small residual adapters. This keeps early
-training close to the original baseline and lets the model learn when to use
-structural context:
-
-- RASA uses `e_h^+ = e_h + lambda_a * gate * anchor`.
-- By default, anchors are fused after the convolutional backbone through a
-  zero-initialized residual adapter. This preserves the original convolution
-  path at the start of training.
-- CGSR returns branch gains around 1, not direct softmax weights around `1/K`.
-- The recommended scripts keep the baseline three-branch backbone
-  `[(1,3),(3,3),(1,5)]`; the new modules are the only major architectural
-  change.
-
-If the new modules hurt early validation MRR, reduce
-`--anchor_residual_init` and `--router_residual_init` to `0.03` or `0.05`.
-For an ablation of direct softmax routing, use `--disable_router_residual`.
-
-For the safest baseline-preserving run, use:
-
-```bash
---anchor_fusion post --module_warmup_epochs 5 --module_ramp_epochs 20 \
---anchor_residual_init 0.01 --anchor_gate_bias -3.0 \
---router_residual_init 0.01
-```
+By default, CGSR uses direct softmax branch weights with
+`--router_temperature 1.0` and no warmup (`--module_warmup_epochs 0`,
+`--module_ramp_epochs 1`). To run the older baseline-preserving residual
+variant, add `--use_router_residual`.

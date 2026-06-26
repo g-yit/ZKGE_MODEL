@@ -100,21 +100,14 @@ class Dataset(object):
             self.get_train()
         return self.train_with_reciprocals
 
-    def build_graph_context(self, max_neighbors=16, min_pmi_count=2):
+    def build_relation_context(self):
         """
-        Build fixed-size graph context tensors from training triples only.
-
-        The context contains:
-        - relation-balanced neighbors for each entity;
-        - relation-pair PMI measured from local relation co-occurrence;
-        - relation cardinality/frequency/entropy/type statistics.
+        Build relation-pattern statistics from training triples only.
         """
         train = self._ensure_train_with_reciprocals().astype('int64')
         n_ent = self.n_entities
         n_rel = self.n_predicates
 
-        neighbors = [[] for _ in range(n_ent)]
-        degree = np.zeros(n_ent, dtype=np.float32)
         rel_count = np.zeros(n_rel, dtype=np.float32)
         heads_by_rel = [set() for _ in range(n_rel)]
         tails_by_rel = [set() for _ in range(n_rel)]
@@ -122,13 +115,9 @@ class Dataset(object):
         rt_heads = defaultdict(set)
         tail_counter_by_rel = [Counter() for _ in range(n_rel)]
         head_counter_by_rel = [Counter() for _ in range(n_rel)]
-        rels_by_entity = [set() for _ in range(n_ent)]
 
         for h, r, t in train:
             h = int(h); r = int(r); t = int(t)
-            neighbors[h].append((r, t))
-            degree[h] += 1
-            degree[t] += 1
             rel_count[r] += 1
             heads_by_rel[r].add(h)
             tails_by_rel[r].add(t)
@@ -136,60 +125,6 @@ class Dataset(object):
             rt_heads[(t, r)].add(h)
             tail_counter_by_rel[r][t] += 1
             head_counter_by_rel[r][h] += 1
-            rels_by_entity[h].add(r)
-
-        neighbor_entities = np.zeros((n_ent, max_neighbors), dtype=np.int64)
-        neighbor_relations = np.zeros((n_ent, max_neighbors), dtype=np.int64)
-        neighbor_mask = np.zeros((n_ent, max_neighbors), dtype=np.float32)
-
-        for ent, cand in enumerate(neighbors):
-            if not cand:
-                continue
-            by_rel = defaultdict(list)
-            for r, t in cand:
-                by_rel[r].append((r, t))
-            quota = max(1, max_neighbors // max(1, len(by_rel)))
-            selected = []
-            used = set()
-            for r in sorted(by_rel.keys(), key=lambda x: -rel_count[x]):
-                rel_cand = sorted(by_rel[r], key=lambda item: (degree[item[1]], item[1]))
-                for item in rel_cand[:quota]:
-                    if len(selected) >= max_neighbors:
-                        break
-                    selected.append(item)
-                    used.add(item)
-                if len(selected) >= max_neighbors:
-                    break
-            if len(selected) < max_neighbors:
-                remaining = [item for item in cand if item not in used]
-                remaining = sorted(remaining, key=lambda item: (degree[item[1]], -rel_count[item[0]], item[1]))
-                selected.extend(remaining[:max_neighbors - len(selected)])
-
-            for j, (r, t) in enumerate(selected[:max_neighbors]):
-                neighbor_entities[ent, j] = t
-                neighbor_relations[ent, j] = r
-                neighbor_mask[ent, j] = 1.0
-
-        rel_cooc = np.zeros((n_rel, n_rel), dtype=np.float32)
-        rel_entity_count = np.zeros(n_rel, dtype=np.float32)
-        for rels in rels_by_entity:
-            if not rels:
-                continue
-            rel_list = list(rels)
-            for r in rel_list:
-                rel_entity_count[r] += 1
-                for ri in rel_list:
-                    rel_cooc[r, ri] += 1
-
-        rel_pair_pmi = np.zeros((n_rel, n_rel), dtype=np.float32)
-        total_entities = float(max(1, n_ent))
-        for r in range(n_rel):
-            for ri in range(n_rel):
-                if rel_cooc[r, ri] < min_pmi_count:
-                    continue
-                numerator = (rel_cooc[r, ri] + 1.0) * total_entities
-                denominator = (rel_entity_count[r] + 1.0) * (rel_entity_count[ri] + 1.0)
-                rel_pair_pmi[r, ri] = max(0.0, np.log(numerator / max(denominator, 1.0)))
 
         rel_stats = np.zeros((n_rel, 10), dtype=np.float32)
         max_freq = max(float(np.max(rel_count)), 1.0)
@@ -234,11 +169,6 @@ class Dataset(object):
             rel_stats[r, 9] = 1.0 if r >= self.real_r else 0.0
 
         return {
-            'neighbor_entities': torch.from_numpy(neighbor_entities),
-            'neighbor_relations': torch.from_numpy(neighbor_relations),
-            'neighbor_mask': torch.from_numpy(neighbor_mask),
-            'rel_pair_pmi': torch.from_numpy(rel_pair_pmi),
-            'entity_log_degree': torch.from_numpy(np.log1p(degree).astype(np.float32)),
             'rel_stats': torch.from_numpy(rel_stats),
         }
 
