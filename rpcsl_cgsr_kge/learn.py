@@ -147,6 +147,8 @@ parser.add_argument("--rpcsl_strength", default=1.0, type=float,
                     help="Global residual strength for RPCSL interpolation.")
 parser.add_argument("--rpcsl_warmup_epochs", default=0, type=int)
 parser.add_argument("--rpcsl_ramp_epochs", default=1, type=int)
+parser.add_argument("--rpcsl_filtered_only", action="store_true",
+                    help="Use filtered CE only and disable set-wise soft supervision.")
 
 args = parser.parse_args()
 
@@ -275,6 +277,7 @@ optimizer = KBCOptimizer(
     rpcsl_strength=args.rpcsl_strength,
     rpcsl_warmup_epochs=args.rpcsl_warmup_epochs,
     rpcsl_ramp_epochs=args.rpcsl_ramp_epochs,
+    rpcsl_filtered_only=args.rpcsl_filtered_only,
 )
 
 

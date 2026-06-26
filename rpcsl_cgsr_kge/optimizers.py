@@ -14,6 +14,7 @@ class KBCOptimizer(object):
             verbose: bool = True, scheduler=None, rpcsl_context=None,
             use_rpcsl=False, rpcsl_filter_positives=True,
             rpcsl_strength=1.0, rpcsl_warmup_epochs=0, rpcsl_ramp_epochs=1,
+            rpcsl_filtered_only=False,
     ):
         self.dsl = dsl
         self.ds = ds
@@ -34,6 +35,7 @@ class KBCOptimizer(object):
         self.rpcsl_strength = rpcsl_strength
         self.rpcsl_warmup_epochs = rpcsl_warmup_epochs
         self.rpcsl_ramp_epochs = max(1, rpcsl_ramp_epochs)
+        self.rpcsl_filtered_only = rpcsl_filtered_only
         self.rpcsl_context = rpcsl_context
         if self.use_rpcsl:
             if rpcsl_context is None:
@@ -83,7 +85,10 @@ class KBCOptimizer(object):
         pos_log_probs = pos_log_probs.masked_fill(set_pos_mask <= 0, -1e9)
         set_loss = -torch.logsumexp(pos_log_probs, dim=1)
 
-        eps = self.rel_epsilon[rels] * self.get_rpcsl_scale(epoch)
+        if self.rpcsl_filtered_only:
+            eps = torch.zeros_like(self.rel_epsilon[rels])
+        else:
+            eps = self.rel_epsilon[rels] * self.get_rpcsl_scale(epoch)
         fit = (1.0 - eps) * ce + eps * set_loss
 
         if weight is not None:

@@ -8,10 +8,9 @@ python learn.py --dataset WN18RR `
         --active_fn "selu" --init_fn "kaiming_normal" `
         --use_scale_router `
         --router_dropout 0.10 --router_temperature 1.00 --router_min_branch_weight 0.02 `
-        --use_rpcsl --rpcsl_max_pos 8 `
-        --rpcsl_eps_min 0.00 --rpcsl_eps_max 0.08 `
-        --rpcsl_eps_tph_weight 0.04 --rpcsl_eps_entropy_weight 0.03 --rpcsl_eps_multi_weight 0.03 `
-        --rpcsl_strength 0.70 --rpcsl_warmup_epochs 3 --rpcsl_ramp_epochs 15 `
+        --use_rpcsl --rpcsl_filtered_only --rpcsl_max_pos 8 `
+        --rpcsl_eps_min 0.00 --rpcsl_eps_max 0.00 `
+        --rpcsl_strength 0.00 --rpcsl_warmup_epochs 0 --rpcsl_ramp_epochs 1 `
         --ce_weight_source train `
         --learning_rate 0.001 --weight_decay 0.0005 `
         --factor 0.5 --patience 5 --min_lr 0.00001 `
