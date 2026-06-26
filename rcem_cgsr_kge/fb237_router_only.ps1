@@ -8,13 +8,9 @@ python learn.py --dataset FB237 `
         --active_fn "selu" --init_fn "kaiming_normal" `
         --use_scale_router `
         --router_dropout 0.15 --router_temperature 1.00 --router_min_branch_weight 0.02 `
-        --use_rpcsl --rpcsl_max_pos 32 `
-        --rpcsl_eps_min 0.01 --rpcsl_eps_max 0.18 `
-        --rpcsl_eps_tph_weight 0.07 --rpcsl_eps_entropy_weight 0.07 --rpcsl_eps_multi_weight 0.05 `
-        --rpcsl_strength 0.85 --rpcsl_warmup_epochs 3 --rpcsl_ramp_epochs 15 `
         --ce_weight_source train `
         --learning_rate 0.001 --weight_decay 0.0005 `
         --factor 0.5 --patience 5 --min_lr 0.00001 `
         --valid 5 --max_epochs 200 --batch_size 512 `
         --seed 42 --verbose 1 `
-        -train -save -id fb237_rpcsl_cgsr
+        -train -save -id fb237_router_only

@@ -8,13 +8,16 @@ python learn.py --dataset UMLS `
         --active_fn "selu" --init_fn "kaiming_normal" `
         --use_scale_router `
         --router_dropout 0.20 --router_temperature 1.00 --router_min_branch_weight 0.03 `
-        --use_rpcsl --rpcsl_max_pos 64 `
-        --rpcsl_eps_min 0.02 --rpcsl_eps_max 0.28 `
-        --rpcsl_eps_tph_weight 0.10 --rpcsl_eps_entropy_weight 0.10 --rpcsl_eps_multi_weight 0.08 `
-        --rpcsl_strength 0.90 --rpcsl_warmup_epochs 5 --rpcsl_ramp_epochs 20 `
+        --use_rcem `
+        --rcem_max_rules 12 --rcem_max_candidates 64 `
+        --rcem_min_rule_support 2 --rcem_max_rule_degree 64 `
+        --rcem_path_strength 0.12 --rcem_type_strength 0.06 `
+        --rcem_path_gate_init 0.08 --rcem_type_gate_init 0.08 `
+        --rcem_warmup_epochs 5 --rcem_ramp_epochs 15 `
+        --rcem_gate_dropout 0.05 `
         --ce_weight_source train `
         --learning_rate 0.001 --weight_decay 0.001 `
         --factor 0.5 --patience 8 --min_lr 0.00001 `
         --valid 10 --max_epochs 250 --batch_size 800 `
         --seed 42 --verbose 1 `
-        -train -save -id umls_rpcsl_cgsr
+        -train -save -id umls_rcem_cgsr

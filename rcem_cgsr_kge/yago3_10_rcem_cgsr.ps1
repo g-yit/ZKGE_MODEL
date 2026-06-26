@@ -8,13 +8,16 @@ python learn.py --dataset YAGO3-10 `
         --active_fn "selu" --init_fn "kaiming_normal" `
         --use_scale_router `
         --router_dropout 0.10 --router_temperature 1.00 --router_min_branch_weight 0.02 `
-        --use_rpcsl --rpcsl_max_pos 16 `
-        --rpcsl_eps_min 0.00 --rpcsl_eps_max 0.15 `
-        --rpcsl_eps_tph_weight 0.06 --rpcsl_eps_entropy_weight 0.06 --rpcsl_eps_multi_weight 0.05 `
-        --rpcsl_strength 0.80 --rpcsl_warmup_epochs 2 --rpcsl_ramp_epochs 10 `
+        --use_rcem `
+        --rcem_max_rules 6 --rcem_max_candidates 16 `
+        --rcem_min_rule_support 8 --rcem_max_rule_degree 32 `
+        --rcem_path_strength 0.08 --rcem_type_strength 0.04 `
+        --rcem_path_gate_init 0.04 --rcem_type_gate_init 0.04 `
+        --rcem_warmup_epochs 3 --rcem_ramp_epochs 12 `
+        --rcem_gate_dropout 0.05 `
         --ce_weight_source train `
         --learning_rate 0.0007 --weight_decay 0.0003 `
         --factor 0.5 --patience 4 --min_lr 0.00001 `
         --valid 5 --max_epochs 150 --batch_size 256 `
         --seed 42 --verbose 1 `
-        -train -save -id yago3_10_rpcsl_cgsr
+        -train -save -id yago3_10_rcem_cgsr

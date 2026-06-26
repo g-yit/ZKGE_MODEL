@@ -1,4 +1,4 @@
-python learn.py --dataset WN18RR `
+python learn.py --dataset YAGO3-10 `
         --model MSDCSE `
         --regularizer NA `
         --optimizer Adam `
@@ -8,12 +8,9 @@ python learn.py --dataset WN18RR `
         --active_fn "selu" --init_fn "kaiming_normal" `
         --use_scale_router `
         --router_dropout 0.10 --router_temperature 1.00 --router_min_branch_weight 0.02 `
-        --use_rpcsl --rpcsl_filtered_only --rpcsl_max_pos 8 `
-        --rpcsl_eps_min 0.00 --rpcsl_eps_max 0.00 `
-        --rpcsl_strength 0.00 --rpcsl_warmup_epochs 0 --rpcsl_ramp_epochs 1 `
         --ce_weight_source train `
-        --learning_rate 0.001 --weight_decay 0.0005 `
-        --factor 0.5 --patience 5 --min_lr 0.00001 `
-        --valid 5 --max_epochs 200 --batch_size 512 `
+        --learning_rate 0.0007 --weight_decay 0.0003 `
+        --factor 0.5 --patience 4 --min_lr 0.00001 `
+        --valid 5 --max_epochs 150 --batch_size 256 `
         --seed 42 --verbose 1 `
-        -train -save -id wn18rr_rpcsl_cgsr
+        -train -save -id yago3_10_router_only

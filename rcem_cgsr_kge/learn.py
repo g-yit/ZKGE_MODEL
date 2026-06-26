@@ -129,6 +129,37 @@ parser.add_argument("--router_residual_init", default=0.10, type=float,
 parser.add_argument("--use_router_residual", action="store_true",
                     help="Use baseline-preserving residual branch gains instead of direct softmax weights.")
 
+# Relation-conditioned evidence memory
+parser.add_argument("--use_rcem", action="store_true",
+                    help="Enable relation-conditioned structural evidence memory.")
+parser.add_argument("--rcem_no_path", action="store_true",
+                    help="Disable two-hop relation composition evidence.")
+parser.add_argument("--rcem_no_type", action="store_true",
+                    help="Disable implicit entity-role type evidence.")
+parser.add_argument("--rcem_max_rules", default=8, type=int,
+                    help="Maximum mined path rules kept for each relation.")
+parser.add_argument("--rcem_max_candidates", default=32, type=int,
+                    help="Maximum evidence candidates stored for each query.")
+parser.add_argument("--rcem_min_rule_support", default=3, type=int,
+                    help="Minimum support for a mined relation composition rule.")
+parser.add_argument("--rcem_max_rule_degree", default=64, type=int,
+                    help="Maximum local degree used while mining and applying path rules.")
+parser.add_argument("--rcem_warmup_epochs", default=0, type=int,
+                    help="Epochs during which evidence residuals are disabled.")
+parser.add_argument("--rcem_ramp_epochs", default=5, type=int,
+                    help="Epochs used to ramp evidence residual strength after warmup.")
+parser.add_argument("--rcem_gate_hidden", default=0, type=int,
+                    help="Hidden size of evidence gate; 0 means embedding_dim.")
+parser.add_argument("--rcem_gate_dropout", default=0.05, type=float)
+parser.add_argument("--rcem_path_strength", default=0.10, type=float,
+                    help="Maximum residual logit strength for path evidence.")
+parser.add_argument("--rcem_type_strength", default=0.04, type=float,
+                    help="Maximum residual logit strength for type evidence.")
+parser.add_argument("--rcem_path_gate_init", default=0.05, type=float,
+                    help="Initial relation gate probability for path evidence.")
+parser.add_argument("--rcem_type_gate_init", default=0.05, type=float,
+                    help="Initial relation gate probability for type evidence.")
+
 args = parser.parse_args()
 
 if args.do_save:
@@ -184,7 +215,17 @@ def parse_list_argument(value):
 
 if args.model == 'MSDCSE':
     filter_size_list = parse_list_argument(args.filter_size_list) if isinstance(args.filter_size_list, str) else args.filter_size_list
-    relation_context = dataset.build_relation_context() if args.use_scale_router else None
+    relation_context = dataset.build_relation_context() if (args.use_scale_router or args.use_rcem) else None
+    rcem_context = None
+    if args.use_rcem:
+        rcem_context = dataset.build_rcem_context(
+            max_rules_per_relation=args.rcem_max_rules,
+            max_candidates_per_query=args.rcem_max_candidates,
+            min_rule_support=args.rcem_min_rule_support,
+            max_rule_degree=args.rcem_max_rule_degree,
+            use_path=not args.rcem_no_path,
+            use_type=not args.rcem_no_type,
+        )
     model = MSDCSE(
         num_ent=dataset.get_shape()[0],
         num_rel=dataset.get_shape()[1],
@@ -209,6 +250,18 @@ if args.model == 'MSDCSE':
         router_min_branch_weight=args.router_min_branch_weight,
         router_residual=args.use_router_residual,
         router_residual_init=args.router_residual_init,
+        use_rcem=args.use_rcem,
+        rcem_context=rcem_context,
+        rcem_use_path=not args.rcem_no_path,
+        rcem_use_type=not args.rcem_no_type,
+        rcem_warmup_epochs=args.rcem_warmup_epochs,
+        rcem_ramp_epochs=args.rcem_ramp_epochs,
+        rcem_gate_hidden=args.rcem_gate_hidden if args.rcem_gate_hidden > 0 else None,
+        rcem_gate_dropout=args.rcem_gate_dropout,
+        rcem_path_strength=args.rcem_path_strength,
+        rcem_type_strength=args.rcem_type_strength,
+        rcem_path_gate_init=args.rcem_path_gate_init,
+        rcem_type_gate_init=args.rcem_type_gate_init,
     )
     model.init()
 

@@ -172,6 +172,163 @@ class Dataset(object):
             'rel_stats': torch.from_numpy(rel_stats),
         }
 
+    def build_rcem_context(
+            self,
+            max_rules_per_relation=8,
+            max_candidates_per_query=32,
+            min_rule_support=3,
+            max_rule_degree=64,
+            use_path=True,
+            use_type=True,
+    ):
+        """
+        Build relation-conditioned evidence memory from training triples only.
+
+        Path evidence mines two-hop relation compositions:
+            r1(h, z) and r2(z, t) -> r(h, t)
+        Type evidence uses unsupervised entity role signatures formed by
+        incoming/outgoing relation distributions.
+        """
+        train = self._ensure_train_with_reciprocals().astype('int64')
+        n_ent = self.n_entities
+        n_rel = self.n_predicates
+        context = {}
+
+        if use_path:
+            max_rules = max(1, int(max_rules_per_relation))
+            max_candidates = max(1, int(max_candidates_per_query))
+            min_support = max(1, int(min_rule_support))
+            max_degree = max(1, int(max_rule_degree))
+
+            out_by_head = defaultdict(list)
+            in_by_tail = defaultdict(list)
+            out_by_rel = [defaultdict(list) for _ in range(n_rel)]
+            rel_count = np.zeros(n_rel, dtype=np.float32)
+
+            for h, r, t in train:
+                h = int(h); r = int(r); t = int(t)
+                out_by_head[h].append((r, t))
+                in_by_tail[t].append((h, r))
+                out_by_rel[r][h].append(t)
+                rel_count[r] += 1
+
+            for h in out_by_head:
+                out_by_head[h] = sorted(out_by_head[h], key=lambda x: (x[0], x[1]))[:max_degree]
+            for t in in_by_tail:
+                in_by_tail[t] = sorted(in_by_tail[t], key=lambda x: (x[0], x[1]))[:max_degree]
+            for r in range(n_rel):
+                for h in out_by_rel[r]:
+                    out_by_rel[r][h] = sorted(set(out_by_rel[r][h]))[:max_degree]
+
+            rule_support = [Counter() for _ in range(n_rel)]
+            for h, r, t in train:
+                h = int(h); r = int(r); t = int(t)
+                left_edges = out_by_head.get(h, [])
+                right_edges = in_by_tail.get(t, [])
+                if not left_edges or not right_edges:
+                    continue
+
+                left_by_mid = defaultdict(list)
+                for r1, mid in left_edges:
+                    left_by_mid[mid].append(r1)
+
+                for mid, r2 in right_edges:
+                    if mid not in left_by_mid:
+                        continue
+                    for r1 in left_by_mid[mid]:
+                        rule_support[r][(r1, r2)] += 1
+
+            rules_by_rel = []
+            for r in range(n_rel):
+                scored_rules = []
+                total = max(float(rel_count[r]), 1.0)
+                for (r1, r2), support in rule_support[r].items():
+                    if support < min_support:
+                        continue
+                    coverage = support / total
+                    score = np.log1p(float(support)) * np.sqrt(max(coverage, 1e-12))
+                    scored_rules.append((score, r1, r2, support))
+                scored_rules.sort(reverse=True)
+                rules_by_rel.append(scored_rules[:max_rules])
+
+            evidence_scores = defaultdict(dict)
+            prune_limit = max_candidates * 4
+            keep_limit = max_candidates * 2
+
+            for target_r, rules in enumerate(rules_by_rel):
+                if not rules:
+                    continue
+                for score, r1, r2, _ in rules:
+                    first_hops = out_by_rel[r1]
+                    if not first_hops:
+                        continue
+                    for h, mids in first_hops.items():
+                        q_scores = evidence_scores[(h, target_r)]
+                        for mid in mids:
+                            tails = out_by_rel[r2].get(mid, [])
+                            for tail in tails:
+                                q_scores[tail] = q_scores.get(tail, 0.0) + float(score)
+                        if len(q_scores) > prune_limit:
+                            top_items = sorted(q_scores.items(), key=lambda x: x[1], reverse=True)[:keep_limit]
+                            evidence_scores[(h, target_r)] = dict(top_items)
+
+            query_index = np.full((n_ent, n_rel), -1, dtype=np.int64)
+            num_queries = len(evidence_scores)
+            candidate_ids = np.zeros((num_queries, max_candidates), dtype=np.int64)
+            candidate_scores = np.zeros((num_queries, max_candidates), dtype=np.float32)
+
+            for idx, ((h, r), scores) in enumerate(evidence_scores.items()):
+                query_index[h, r] = idx
+                top_items = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:max_candidates]
+                if not top_items:
+                    continue
+                values = np.array([v for _, v in top_items], dtype=np.float32)
+                values = values / max(float(values.max()), 1e-6)
+                candidate_ids[idx, :len(top_items)] = [t for t, _ in top_items]
+                candidate_scores[idx, :len(top_items)] = values
+
+            context['path_query_index'] = torch.from_numpy(query_index)
+            context['path_candidate_ids'] = torch.from_numpy(candidate_ids)
+            context['path_candidate_scores'] = torch.from_numpy(candidate_scores)
+
+        if use_type:
+            role_dim = n_rel * 2
+            role = np.zeros((n_ent, role_dim), dtype=np.float32)
+            tail_proto = np.zeros((n_rel, role_dim), dtype=np.float32)
+            tail_count = np.zeros(n_rel, dtype=np.float32)
+
+            for h, r, t in train:
+                h = int(h); r = int(r); t = int(t)
+                role[h, r] += 1.0
+                role[t, n_rel + r] += 1.0
+
+            role = np.log1p(role)
+            role_norm = np.linalg.norm(role, axis=1, keepdims=True)
+            role = role / np.maximum(role_norm, 1e-6)
+
+            for h, r, t in train:
+                r = int(r); t = int(t)
+                tail_proto[r] += role[t]
+                tail_count[r] += 1.0
+
+            tail_proto = tail_proto / np.maximum(tail_count[:, None], 1.0)
+            proto_norm = np.linalg.norm(tail_proto, axis=1, keepdims=True)
+            tail_proto = tail_proto / np.maximum(proto_norm, 1e-6)
+
+            type_scores = np.matmul(tail_proto, role.T).astype(np.float32)
+            for r in range(n_rel):
+                row = type_scores[r]
+                row_min = float(row.min())
+                row_max = float(row.max())
+                if row_max > row_min:
+                    type_scores[r] = (row - row_min) / (row_max - row_min)
+                else:
+                    type_scores[r] = 0.0
+
+            context['type_scores'] = torch.from_numpy(type_scores)
+
+        return context
+
     def eval(
             self, model: KBCModel, split: str, n_queries: int = -1, missing_eval: str = 'both',
             at: Tuple[int] = (1, 3, 10), log_result=False, save_path=None
