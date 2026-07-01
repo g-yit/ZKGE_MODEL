@@ -64,8 +64,8 @@ class SELayer(nn.Module):
 class ContextGuidedScaleRouter(nn.Module):
     """
     Produces query-specific weights for multi-scale convolution branches.
-    The router is driven by head-entity context, relation semantics, and
-    precomputed relation-pattern statistics.
+    The router is driven by relation semantics and precomputed
+    relation-pattern statistics.
     """
     def __init__(
             self, num_filters, emb_dim, stat_dim=0, hidden_dim=None,
@@ -80,7 +80,7 @@ class ContextGuidedScaleRouter(nn.Module):
         self.residual = residual
         residual_init = min(max(residual_init, 1e-4), 1.0 - 1e-4)
         self.residual_logit = nn.Parameter(torch.tensor(math.log(residual_init / (1.0 - residual_init))))
-        in_dim = 2 * emb_dim + stat_dim
+        in_dim = emb_dim + stat_dim
         self.router = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
             nn.ReLU(),
@@ -88,11 +88,11 @@ class ContextGuidedScaleRouter(nn.Module):
             nn.Linear(hidden_dim, num_filters),
         )
 
-    def forward(self, e1_emb, rel_emb, rel_stats=None):
+    def forward(self, rel_emb, rel_stats=None):
         if rel_stats is None:
-            route_input = torch.cat([e1_emb, rel_emb], dim=-1)
+            route_input = rel_emb
         else:
-            route_input = torch.cat([e1_emb, rel_emb, rel_stats], dim=-1)
+            route_input = torch.cat([rel_emb, rel_stats], dim=-1)
         logits = self.router(route_input) / max(self.temperature, 1e-6)
         alpha = torch.softmax(logits, dim=-1)
         if self.min_branch_weight > 0:
@@ -508,7 +508,7 @@ class MSDCSE(KBCModel):
             outputs.append(output)
 
         if self.scale_router is not None:
-            alpha = self.scale_router(e1_embedded, rel_embedded, rel_stats=rel_stats)
+            alpha = self.scale_router(rel_embedded, rel_stats=rel_stats)
             module_scale = self.get_module_scale()
             if isinstance(module_scale, float) and module_scale != 1.0:
                 alpha = 1.0 + module_scale * (alpha - 1.0)
