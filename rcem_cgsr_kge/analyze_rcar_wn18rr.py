@@ -307,13 +307,36 @@ def get_relation_ids(dataset: Dataset, include_inverse: bool) -> np.ndarray:
 
 
 @torch.no_grad()
-def extract_routing_weights(model, rel_ids: np.ndarray, device: torch.device, normalize_residual: bool = True) -> np.ndarray:
+def extract_routing_weights(
+        model, dataset: Dataset, rel_ids: np.ndarray, device: torch.device,
+        normalize_residual: bool = True, max_heads_per_relation: int = 512
+) -> np.ndarray:
     if getattr(model, "scale_router", None) is None:
         raise RuntimeError("The loaded model has no scale_router. Train or load a checkpoint with --use_scale_router.")
-    rel_tensor = torch.as_tensor(rel_ids, dtype=torch.long, device=device)
-    rel_emb = model.emb_rel(rel_tensor)
-    rel_stats = model.rel_stats[rel_tensor] if getattr(model, "rel_stats", torch.empty(0)).numel() > 0 else None
-    alpha = model.scale_router(rel_emb, rel_stats=rel_stats).detach().cpu().numpy()
+
+    train = dataset._ensure_train_with_reciprocals().astype("int64")
+    heads_by_rel = defaultdict(list)
+    for h, r, _ in train:
+        heads_by_rel[int(r)].append(int(h))
+
+    rows = []
+    for rel_id in rel_ids:
+        heads = sorted(set(heads_by_rel.get(int(rel_id), [])))
+        if not heads:
+            heads = [0]
+        if len(heads) > max_heads_per_relation:
+            select_idx = np.linspace(0, len(heads) - 1, max_heads_per_relation, dtype=np.int64)
+            heads = [heads[int(i)] for i in select_idx]
+
+        head_tensor = torch.as_tensor(heads, dtype=torch.long, device=device)
+        rel_tensor = torch.full((len(heads),), int(rel_id), dtype=torch.long, device=device)
+        e1_emb = model.emb_ent(head_tensor)
+        rel_emb = model.emb_rel(rel_tensor)
+        rel_stats = model.rel_stats[rel_tensor] if getattr(model, "rel_stats", torch.empty(0)).numel() > 0 else None
+        rel_alpha = model.scale_router(e1_emb, rel_emb, rel_stats=rel_stats).detach().cpu().numpy()
+        rows.append(rel_alpha.mean(axis=0))
+
+    alpha = np.asarray(rows, dtype=np.float64)
     # If the router was trained in residual-gain mode, alpha may be branch gains
     # rather than probabilities. For plotting relative branch preference, normalize.
     if normalize_residual:
@@ -685,7 +708,7 @@ def main():
     })
 
     # ------------------------- 4.4 Routing analysis --------------------------
-    alpha = extract_routing_weights(model, rel_ids_for_fig, device, normalize_residual=args.normalize_router)
+    alpha = extract_routing_weights(model, dataset, rel_ids_for_fig, device, normalize_residual=args.normalize_router)
     branch_names = [f"Scale-{i+1}" for i in range(alpha.shape[1])]
 
     routing_rows = []
