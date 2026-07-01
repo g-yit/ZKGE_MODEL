@@ -69,8 +69,10 @@ class ContextGuidedScaleRouter(nn.Module):
     """
     def __init__(
             self, num_filters, emb_dim, stat_dim=0, hidden_dim=None,
+            num_rel=None,
             dropout=0.1, temperature=1.0, min_branch_weight=0.0,
-            residual=False, residual_init=0.10
+            residual=False, residual_init=0.10,
+            use_relation_bias=False, relation_bias_init=0.0
     ):
         super(ContextGuidedScaleRouter, self).__init__()
         hidden_dim = hidden_dim or emb_dim
@@ -78,6 +80,7 @@ class ContextGuidedScaleRouter(nn.Module):
         self.temperature = temperature
         self.min_branch_weight = min_branch_weight
         self.residual = residual
+        self.use_relation_bias = use_relation_bias and num_rel is not None
         residual_init = min(max(residual_init, 1e-4), 1.0 - 1e-4)
         self.residual_logit = nn.Parameter(torch.tensor(math.log(residual_init / (1.0 - residual_init))))
         in_dim = emb_dim + stat_dim
@@ -87,13 +90,21 @@ class ContextGuidedScaleRouter(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, num_filters),
         )
+        if self.use_relation_bias:
+            self.relation_bias = nn.Embedding(num_rel, num_filters)
+            nn.init.normal_(self.relation_bias.weight, mean=0.0, std=relation_bias_init)
+        else:
+            self.relation_bias = None
 
-    def forward(self, rel_emb, rel_stats=None):
+    def forward(self, rel_emb, rel_stats=None, rel_ids=None):
         if rel_stats is None:
             route_input = rel_emb
         else:
             route_input = torch.cat([rel_emb, rel_stats], dim=-1)
-        logits = self.router(route_input) / max(self.temperature, 1e-6)
+        logits = self.router(route_input)
+        if self.relation_bias is not None and rel_ids is not None:
+            logits = logits + self.relation_bias(rel_ids)
+        logits = logits / max(self.temperature, 1e-6)
         alpha = torch.softmax(logits, dim=-1)
         if self.min_branch_weight > 0:
             min_weight = min(self.min_branch_weight, 1.0 / self.num_filters - 1e-6)
@@ -116,6 +127,8 @@ class RelationEvidenceMemory(nn.Module):
             use_path=True, use_type=True, gate_hidden=None, gate_dropout=0.05,
             path_strength=0.10, type_strength=0.04,
             path_gate_init=0.05, type_gate_init=0.05,
+            gate_temperature=1.0,
+            use_relation_gate_bias=False, relation_gate_bias_init=0.0,
     ):
         super(RelationEvidenceMemory, self).__init__()
         evidence_context = evidence_context or {}
@@ -127,6 +140,8 @@ class RelationEvidenceMemory(nn.Module):
         self.use_type = use_type and 'type_scores' in evidence_context
         self.path_strength = path_strength
         self.type_strength = type_strength
+        self.gate_temperature = gate_temperature
+        self.use_relation_gate_bias = use_relation_gate_bias
 
         if self.use_path:
             self.register_buffer('path_query_index', evidence_context['path_query_index'].long(), persistent=False)
@@ -151,6 +166,11 @@ class RelationEvidenceMemory(nn.Module):
             nn.Linear(hidden, 2),
         )
         self._init_gate(path_gate_init, type_gate_init)
+        if self.use_relation_gate_bias:
+            self.relation_gate_bias = nn.Embedding(num_rel, 2)
+            nn.init.normal_(self.relation_gate_bias.weight, mean=0.0, std=relation_gate_bias_init)
+        else:
+            self.relation_gate_bias = None
 
     @staticmethod
     def _to_logit(value):
@@ -171,7 +191,10 @@ class RelationEvidenceMemory(nn.Module):
             gate_input = rel_emb
         else:
             gate_input = torch.cat([rel_emb, rel_stats], dim=-1)
-        gates = torch.sigmoid(self.gate(gate_input))
+        gate_logits = self.gate(gate_input)
+        if self.relation_gate_bias is not None:
+            gate_logits = gate_logits + self.relation_gate_bias(rels)
+        gates = torch.sigmoid(gate_logits / max(self.gate_temperature, 1e-6))
 
         if self.use_type and self.type_scores.numel() > 0:
             type_gate = gates[:, 1] * self.type_strength * module_scale
@@ -253,12 +276,15 @@ class MSDCSE(KBCModel):
                  router_hidden=None, router_dropout=0.1, router_temperature=1.0,
                  router_min_branch_weight=0.0, router_residual=False,
                  router_residual_init=0.10,
+                 router_relation_bias=False, router_relation_bias_init=0.0,
                  use_rcem=False, rcem_context=None,
                  rcem_use_path=True, rcem_use_type=True,
                  rcem_warmup_epochs=0, rcem_ramp_epochs=1,
                  rcem_gate_hidden=None, rcem_gate_dropout=0.05,
                  rcem_path_strength=0.10, rcem_type_strength=0.04,
-                 rcem_path_gate_init=0.05, rcem_type_gate_init=0.05):
+                 rcem_path_gate_init=0.05, rcem_type_gate_init=0.05,
+                 rcem_gate_temperature=1.0,
+                 rcem_relation_gate_bias=False, rcem_relation_gate_bias_init=0.0):
         super(MSDCSE, self).__init__()
 
         self.embeddings = nn.ModuleList([
@@ -345,11 +371,14 @@ class MSDCSE(KBCModel):
                 emb_dim=embedding_dim,
                 stat_dim=self.stat_dim,
                 hidden_dim=router_hidden,
+                num_rel=num_rel,
                 dropout=router_dropout,
                 temperature=router_temperature,
                 min_branch_weight=router_min_branch_weight,
                 residual=router_residual,
                 residual_init=router_residual_init,
+                use_relation_bias=router_relation_bias,
+                relation_bias_init=router_relation_bias_init,
             )
         else:
             self.scale_router = None
@@ -369,6 +398,9 @@ class MSDCSE(KBCModel):
                 type_strength=rcem_type_strength,
                 path_gate_init=rcem_path_gate_init,
                 type_gate_init=rcem_type_gate_init,
+                gate_temperature=rcem_gate_temperature,
+                use_relation_gate_bias=rcem_relation_gate_bias,
+                relation_gate_bias_init=rcem_relation_gate_bias_init,
             )
         else:
             self.rcem = None
@@ -508,7 +540,7 @@ class MSDCSE(KBCModel):
             outputs.append(output)
 
         if self.scale_router is not None:
-            alpha = self.scale_router(rel_embedded, rel_stats=rel_stats)
+            alpha = self.scale_router(rel_embedded, rel_stats=rel_stats, rel_ids=rel)
             module_scale = self.get_module_scale()
             if isinstance(module_scale, float) and module_scale != 1.0:
                 alpha = 1.0 + module_scale * (alpha - 1.0)

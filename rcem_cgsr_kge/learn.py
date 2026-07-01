@@ -128,6 +128,10 @@ parser.add_argument("--router_residual_init", default=0.10, type=float,
                     help="Initial residual strength for branch routing.")
 parser.add_argument("--use_router_residual", action="store_true",
                     help="Use baseline-preserving residual branch gains instead of direct softmax weights.")
+parser.add_argument("--use_router_relation_bias", action="store_true",
+                    help="Add a learnable relation-specific bias to branch-routing logits.")
+parser.add_argument("--router_relation_bias_init", default=0.0, type=float,
+                    help="Std of the initial relation-specific branch-routing bias.")
 
 # Relation-conditioned evidence memory
 parser.add_argument("--use_rcem", action="store_true",
@@ -159,6 +163,12 @@ parser.add_argument("--rcem_path_gate_init", default=0.05, type=float,
                     help="Initial relation gate probability for path evidence.")
 parser.add_argument("--rcem_type_gate_init", default=0.05, type=float,
                     help="Initial relation gate probability for type evidence.")
+parser.add_argument("--rcem_gate_temperature", default=1.0, type=float,
+                    help="Temperature for evidence gate logits; lower values sharpen relation differences.")
+parser.add_argument("--use_rcem_relation_gate_bias", action="store_true",
+                    help="Add a learnable relation-specific bias to path/type gate logits.")
+parser.add_argument("--rcem_relation_gate_bias_init", default=0.0, type=float,
+                    help="Std of the initial relation-specific evidence-gate bias.")
 
 args = parser.parse_args()
 
@@ -250,6 +260,8 @@ if args.model == 'MSDCSE':
         router_min_branch_weight=args.router_min_branch_weight,
         router_residual=args.use_router_residual,
         router_residual_init=args.router_residual_init,
+        router_relation_bias=args.use_router_relation_bias,
+        router_relation_bias_init=args.router_relation_bias_init,
         use_rcem=args.use_rcem,
         rcem_context=rcem_context,
         rcem_use_path=not args.rcem_no_path,
@@ -262,6 +274,9 @@ if args.model == 'MSDCSE':
         rcem_type_strength=args.rcem_type_strength,
         rcem_path_gate_init=args.rcem_path_gate_init,
         rcem_type_gate_init=args.rcem_type_gate_init,
+        rcem_gate_temperature=args.rcem_gate_temperature,
+        rcem_relation_gate_bias=args.use_rcem_relation_gate_bias,
+        rcem_relation_gate_bias_init=args.rcem_relation_gate_bias_init,
     )
     model.init()
 
