@@ -1,0 +1,25 @@
+Set-Location $PSScriptRoot
+
+python learn.py --dataset YAGO3-10 `
+        --model MSDCSE `
+        --regularizer NA `
+        --optimizer Adam `
+        --rank 400 --k_w 20 --k_h 20 --output_channel 4 `
+        --filter_size_list "[(1,3),(3,3),(1,5)]" `
+        --input_drop 0.30 --hidden_drop 0.20 --feature_map_drop 0.35 `
+        --active_fn "selu" --init_fn "kaiming_normal" `
+        --use_scale_router `
+        --router_dropout 0.10 --router_temperature 1.00 --router_min_branch_weight 0.02 `
+        --use_rcem `
+        --rcem_max_rules 6 --rcem_max_candidates 16 `
+        --rcem_min_rule_support 8 --rcem_max_rule_degree 32 `
+        --rcem_path_strength 0.08 --rcem_type_strength 0.04 `
+        --rcem_path_gate_init 0.04 --rcem_type_gate_init 0.04 `
+        --rcem_warmup_epochs 3 --rcem_ramp_epochs 12 `
+        --rcem_gate_dropout 0.05 `
+        --ce_weight_source train `
+        --learning_rate 0.0007 --weight_decay 0.0003 `
+        --factor 0.5 --patience 4 --min_lr 0.00001 `
+        --valid 5 --max_epochs 150 --batch_size 256 `
+        --seed 42 --verbose 1 `
+        -train -save -id yago3_10_rcem_cgsr
