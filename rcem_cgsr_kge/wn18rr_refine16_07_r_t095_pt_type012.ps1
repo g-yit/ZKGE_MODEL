@@ -23,6 +23,7 @@ python learn.py --dataset WN18RR `
         --decay1 0.9 `
         --decay2 0.999 `
         --name WN18RR `
+        -weight `
         --ce_weight_source test `
         --save_path "./logs/" `
         --negative_sample_size 200 `
