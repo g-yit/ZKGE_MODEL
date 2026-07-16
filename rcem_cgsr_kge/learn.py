@@ -15,26 +15,6 @@ from optimizers import KBCOptimizer
 
 datasets = ['WN18RR', 'FB237', 'YAGO3-10','UMLS','KINSHIP']
 
-# Keep engineering/stability choices fixed so the module-level search space is
-# limited to the seven scientifically meaningful hyperparameters exposed below.
-# These values are also written to config.json for reproducibility.
-FIXED_MODULE_CONFIG = {
-    'cgsr': {
-        'router_dropout': 0.1,
-        'router_min_branch_weight': 0.02,
-        'router_residual_init': 0.10,
-    },
-    'rcem': {
-        'max_candidates': 32,
-        'min_rule_support': 3,
-        'max_rule_degree': 64,
-        'rule_smoothing': 1.0,
-        'gate_dropout': 0.05,
-        'path_gate_init': 0.05,
-        'type_gate_init': 0.05,
-    },
-}
-
 parser = argparse.ArgumentParser(
     description="Tensor Factorization for Knowledge Graph Completion"
 )
@@ -131,54 +111,56 @@ parser.add_argument("--init_fn", default="xavier_normal", help="initialization f
 parser.add_argument("--filter_size_list", default=[(1, 5, 1, 2), (3, 3), (1, 9)],
                     help="卷积列表，格式为[(h,w,dh,dw),(h,w),(h,w)]")
 
-# Shared context-module capacity
-parser.add_argument("--context_hidden", default=0, type=int,
-                    help="Shared CGSR/RCEM hidden size; 0 means min(rank, 128).")
-
 # Context-guided scale routing
 parser.add_argument("--use_scale_router", action="store_true",
                     help="Enable context-guided scale routing over convolution branches.")
+parser.add_argument("--module_warmup_epochs", default=0, type=int,
+                    help="Epochs during which new modules are identity-preserving.")
+parser.add_argument("--module_ramp_epochs", default=1, type=int,
+                    help="Epochs used to ramp new module strength after warmup.")
+parser.add_argument("--router_hidden", default=0, type=int,
+                    help="Hidden size of the scale router; 0 means embedding_dim.")
+parser.add_argument("--router_dropout", default=0.1, type=float)
 parser.add_argument("--router_temperature", default=1.0, type=float)
-parser.add_argument("--router_content_scale", default=0.25, type=float,
-                    help="Initial trainable strength of branch-content feedback; 0 disables it exactly.")
-parser.add_argument("--use_router_residual", dest="use_router_residual", action="store_true",
-                    help="Use baseline-preserving query-dependent residual branch gains.")
-parser.add_argument("--no_router_residual", dest="use_router_residual", action="store_false",
-                    help="Use full mean-preserving branch gains without a confidence residual.")
-parser.set_defaults(use_router_residual=True)
+parser.add_argument("--router_min_branch_weight", default=0.0, type=float,
+                    help="Lower bound for each branch weight, useful for stable early training.")
+parser.add_argument("--router_residual_init", default=0.10, type=float,
+                    help="Initial residual strength for branch routing.")
+parser.add_argument("--use_router_residual", action="store_true",
+                    help="Use baseline-preserving residual branch gains instead of direct softmax weights.")
 
 # Relation-conditioned evidence memory
 parser.add_argument("--use_rcem", action="store_true",
-                    help="Enable query- and evidence-conditioned structural memory.")
+                    help="Enable relation-conditioned structural evidence memory.")
 parser.add_argument("--rcem_no_path", action="store_true",
                     help="Disable two-hop relation composition evidence.")
 parser.add_argument("--rcem_no_type", action="store_true",
                     help="Disable implicit entity-role type evidence.")
 parser.add_argument("--rcem_max_rules", default=8, type=int,
                     help="Maximum mined path rules kept for each relation.")
-parser.add_argument("--rcem_standard_confidence_weight", default=0.3, type=float,
-                    help="Weight of standard confidence; the remainder uses PCA confidence.")
+parser.add_argument("--rcem_max_candidates", default=32, type=int,
+                    help="Maximum evidence candidates stored for each query.")
+parser.add_argument("--rcem_min_rule_support", default=3, type=int,
+                    help="Minimum support for a mined relation composition rule.")
+parser.add_argument("--rcem_max_rule_degree", default=64, type=int,
+                    help="Maximum local degree used while mining and applying path rules.")
+parser.add_argument("--rcem_warmup_epochs", default=0, type=int,
+                    help="Epochs during which evidence residuals are disabled.")
+parser.add_argument("--rcem_ramp_epochs", default=5, type=int,
+                    help="Epochs used to ramp evidence residual strength after warmup.")
+parser.add_argument("--rcem_gate_hidden", default=0, type=int,
+                    help="Hidden size of evidence gate; 0 means embedding_dim.")
+parser.add_argument("--rcem_gate_dropout", default=0.05, type=float)
 parser.add_argument("--rcem_path_strength", default=0.10, type=float,
                     help="Maximum residual logit strength for path evidence.")
 parser.add_argument("--rcem_type_strength", default=0.04, type=float,
                     help="Maximum residual logit strength for type evidence.")
+parser.add_argument("--rcem_path_gate_init", default=0.05, type=float,
+                    help="Initial relation gate probability for path evidence.")
+parser.add_argument("--rcem_type_gate_init", default=0.05, type=float,
+                    help="Initial relation gate probability for type evidence.")
 
 args = parser.parse_args()
-
-if args.router_temperature <= 0:
-    parser.error("--router_temperature must be greater than 0")
-if args.context_hidden < 0:
-    parser.error("--context_hidden must be non-negative")
-if args.router_content_scale < 0:
-    parser.error("--router_content_scale must be non-negative")
-if args.rcem_max_rules < 1:
-    parser.error("--rcem_max_rules must be at least 1")
-if not 0.0 <= args.rcem_standard_confidence_weight <= 1.0:
-    parser.error("--rcem_standard_confidence_weight must be in [0, 1]")
-if args.rcem_path_strength < 0:
-    parser.error("--rcem_path_strength must be non-negative")
-if args.rcem_type_strength < 0:
-    parser.error("--rcem_type_strength must be non-negative")
 
 if args.do_save:
     assert args.save_path
@@ -191,10 +173,8 @@ if args.do_save:
     if not os.path.exists(save_path):
         os.mkdir(save_path)
 
-    run_config = vars(args).copy()
-    run_config['fixed_module_config'] = FIXED_MODULE_CONFIG
     with open(os.path.join(save_path, 'config.json'), 'w') as f:
-        json.dump(run_config, f, indent=4)
+        json.dump(vars(args), f, indent=4)
 
 data_path = "../data"
 dataset = Dataset(data_path, args.dataset)
@@ -235,19 +215,14 @@ def parse_list_argument(value):
 
 if args.model == 'MSDCSE':
     filter_size_list = parse_list_argument(args.filter_size_list) if isinstance(args.filter_size_list, str) else args.filter_size_list
-    relation_context = dataset.build_relation_context(
-        include_entity_stats=args.use_scale_router
-    ) if (args.use_scale_router or args.use_rcem) else None
+    relation_context = dataset.build_relation_context() if (args.use_scale_router or args.use_rcem) else None
     rcem_context = None
-    rcem_fixed = FIXED_MODULE_CONFIG['rcem']
     if args.use_rcem:
         rcem_context = dataset.build_rcem_context(
             max_rules_per_relation=args.rcem_max_rules,
-            max_candidates_per_query=rcem_fixed['max_candidates'],
-            min_rule_support=rcem_fixed['min_rule_support'],
-            max_rule_degree=rcem_fixed['max_rule_degree'],
-            standard_confidence_weight=args.rcem_standard_confidence_weight,
-            rule_smoothing=rcem_fixed['rule_smoothing'],
+            max_candidates_per_query=args.rcem_max_candidates,
+            min_rule_support=args.rcem_min_rule_support,
+            max_rule_degree=args.rcem_max_rule_degree,
             use_path=not args.rcem_no_path,
             use_type=not args.rcem_no_type,
         )
@@ -267,18 +242,26 @@ if args.model == 'MSDCSE':
         ce_weight=ce_weight,
         use_scale_router=args.use_scale_router,
         relation_context=relation_context,
-        context_hidden=(
-            args.context_hidden if args.context_hidden > 0 else None
-        ),
+        module_warmup_epochs=args.module_warmup_epochs,
+        module_ramp_epochs=args.module_ramp_epochs,
+        router_hidden=args.router_hidden if args.router_hidden > 0 else None,
+        router_dropout=args.router_dropout,
         router_temperature=args.router_temperature,
+        router_min_branch_weight=args.router_min_branch_weight,
         router_residual=args.use_router_residual,
-        router_content_scale=args.router_content_scale,
+        router_residual_init=args.router_residual_init,
         use_rcem=args.use_rcem,
         rcem_context=rcem_context,
         rcem_use_path=not args.rcem_no_path,
         rcem_use_type=not args.rcem_no_type,
+        rcem_warmup_epochs=args.rcem_warmup_epochs,
+        rcem_ramp_epochs=args.rcem_ramp_epochs,
+        rcem_gate_hidden=args.rcem_gate_hidden if args.rcem_gate_hidden > 0 else None,
+        rcem_gate_dropout=args.rcem_gate_dropout,
         rcem_path_strength=args.rcem_path_strength,
         rcem_type_strength=args.rcem_type_strength,
+        rcem_path_gate_init=args.rcem_path_gate_init,
+        rcem_type_gate_init=args.rcem_type_gate_init,
     )
     model.init()
 
@@ -347,7 +330,7 @@ if args.do_train:
         best_valid_mrr = 0.0
         for e in range(args.max_epochs):
             print("Epoch: {}".format(e + 1))
-            cur_loss = optimizer.epoch(examples, weight=ce_weight)
+            cur_loss = optimizer.epoch(examples, e=e, weight=ce_weight)
 
             if (e + 1) % args.valid == 0:
                 (valid, valid_mrr), (test, test_mrr) = [

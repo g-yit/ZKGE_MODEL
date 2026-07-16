@@ -27,8 +27,10 @@ class KBCOptimizer(object):
         self.rank = rank
         self.out_size = out_size
 
-    def epoch(self, examples: torch.LongTensor, weight=None):
+    def epoch(self, examples: torch.LongTensor, e=0, weight=None):
         self.model.train()
+        if hasattr(self.model, 'set_epoch'):
+            self.model.set_epoch(e)
         actual_examples = examples[torch.randperm(examples.shape[0]), :]
         loss = nn.CrossEntropyLoss(reduction='mean', weight=weight)
         loss_fit_list = []
