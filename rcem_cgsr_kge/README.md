@@ -20,22 +20,6 @@ s_final(h, r, t) = s_embed(h, r, t)
 
 All evidence is built from training triples and their reciprocal triples only.
 
-## Training Objective
-
-Training triples are grouped by each unique `(head, relation)` query. All known
-training tails for the query are optimized together with a uniform-target
-multi-positive softmax loss:
-
-```text
-L(q) = -mean_{t in positives(q)} log softmax(score(q))[t]
-```
-
-The implementation gathers only positive entity ids and does not construct a
-second dense `batch_size x num_entities` label matrix. Queries contribute
-equally regardless of their number of known positive tails. A random positive
-tail is retained in the legacy three-column model input only for embedding
-regularization.
-
 ## Main Switches and Core Hyperparameters
 
 Only seven numerical module hyperparameters are exposed for experiments. The

@@ -95,33 +95,6 @@ class Dataset(object):
         # 三元组的数量变为了2倍
         return sdata
 
-    def get_multi_positive_train(self):
-        """
-        Group reciprocal training triples by query ``(head, relation)``.
-
-        The returned query tensor keeps one representative tail in its third
-        column so existing model forward/regularizer interfaces remain
-        compatible. ``positive_targets`` contains every known training tail
-        for the corresponding query and is the actual supervision used by the
-        multi-positive softmax loss.
-        """
-        train = self._ensure_train_with_reciprocals().astype('int64')
-        tails_by_query = defaultdict(set)
-        for h, r, t in train:
-            tails_by_query[(int(h), int(r))].add(int(t))
-
-        query_keys = sorted(tails_by_query)
-        queries = np.zeros((len(query_keys), 3), dtype=np.int64)
-        positive_targets = []
-        for i, (h, r) in enumerate(query_keys):
-            tails = np.asarray(
-                sorted(tails_by_query[(h, r)]), dtype=np.int64
-            )
-            queries[i] = (h, r, int(tails[0]))
-            positive_targets.append(torch.from_numpy(tails))
-
-        return torch.from_numpy(queries), positive_targets
-
     def _ensure_train_with_reciprocals(self):
         if not hasattr(self, 'train_with_reciprocals'):
             self.get_train()

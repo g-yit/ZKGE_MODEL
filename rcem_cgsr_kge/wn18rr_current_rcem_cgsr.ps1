@@ -37,7 +37,7 @@ python learn.py `
     --rcem_type_strength 0.04 `
     -train `
     -save `
-    -id wn18rr_current_rcem_cgsr_mp
+    -id wn18rr_current_rcem_cgsr
 
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE

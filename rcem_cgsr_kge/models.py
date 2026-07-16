@@ -432,6 +432,10 @@ class MSDCSE(KBCModel):
         self.k_w = k_w
         self.k_h = k_h
         self.ce_weight = ce_weight
+        if self.ce_weight is not None:
+            self.loss = torch.nn.CrossEntropyLoss(reduction='mean', weight=ce_weight)
+        else:
+            self.loss = torch.nn.CrossEntropyLoss()
         self.device = torch.device('cuda')
         self.active_fn = self.get_active_fn(active_fn)
         self.init_fn = self.get_init_fn(init_fn)

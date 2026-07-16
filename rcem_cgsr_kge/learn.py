@@ -192,7 +192,6 @@ if args.do_save:
         os.mkdir(save_path)
 
     run_config = vars(args).copy()
-    run_config['training_objective'] = 'multi_positive_softmax_uniform'
     run_config['fixed_module_config'] = FIXED_MODULE_CONFIG
     with open(os.path.join(save_path, 'config.json'), 'w') as f:
         json.dump(run_config, f, indent=4)
@@ -210,11 +209,7 @@ def setup_seed(seed):
     torch.backends.cudnn.benchmark = False
 
 setup_seed(args.seed)
-examples, positive_targets = dataset.get_multi_positive_train()
-print(
-    "Multi-positive training queries:", len(examples),
-    "positive triples:", sum(len(targets) for targets in positive_targets),
-)
+examples = torch.from_numpy(dataset.get_train().astype('int64'))
 
 if args.no_ce_weight:
     ce_weight = None
@@ -352,11 +347,7 @@ if args.do_train:
         best_valid_mrr = 0.0
         for e in range(args.max_epochs):
             print("Epoch: {}".format(e + 1))
-            cur_loss = optimizer.epoch(
-                examples,
-                positive_targets=positive_targets,
-                weight=ce_weight,
-            )
+            cur_loss = optimizer.epoch(examples, weight=ce_weight)
 
             if (e + 1) % args.valid == 0:
                 (valid, valid_mrr), (test, test_mrr) = [
