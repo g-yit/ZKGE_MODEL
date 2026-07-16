@@ -2,10 +2,10 @@ $ErrorActionPreference = "Stop"
 
 Set-Location $PSScriptRoot
 
-if (-not (Test-Path "../../data/WN18RR/train.pickle")) {
+if (-not (Test-Path "../data/WN18RR/train.pickle")) {
     python process_datasets.py `
-        --src_root "../../src_data" `
-        --out_root "../../data" `
+        --src_root "../src_data" `
+        --out_root "../data" `
         --datasets WN18RR
 }
 
@@ -23,7 +23,7 @@ python learn.py --dataset WN18RR `
         --decay1 0.9 `
         --decay2 0.999 `
         --name WN18RR `
-        --ce_weight_source train `
+        --ce_weight_source test `
         --save_path "./logs/" `
         --negative_sample_size 200 `
         --out_size 4000 `

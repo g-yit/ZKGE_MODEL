@@ -10,7 +10,7 @@ class KBCOptimizer(object):
     def __init__(
             self, dsl, ds, model_name, model: KBCModel, regularizer: list, optimizer: optim.Optimizer,
             batch_size: int = 256, temp: float = 1.0, rank: int = 2000, out_size: int = 2000,
-            verbose: bool = True, scheduler=None, grad_clip: float = 1.0,
+            verbose: bool = True, scheduler=None,
     ):
         self.dsl = dsl
         self.ds = ds
@@ -26,12 +26,9 @@ class KBCOptimizer(object):
         self.temperature = temp
         self.rank = rank
         self.out_size = out_size
-        self.grad_clip = grad_clip
 
-    def epoch(self, examples: torch.LongTensor, e=0, weight=None):
+    def epoch(self, examples: torch.LongTensor, weight=None):
         self.model.train()
-        if hasattr(self.model, 'set_epoch'):
-            self.model.set_epoch(e)
         actual_examples = examples[torch.randperm(examples.shape[0]), :]
         loss = nn.CrossEntropyLoss(reduction='mean', weight=weight)
         loss_fit_list = []
@@ -55,8 +52,6 @@ class KBCOptimizer(object):
                 loss_fit_list.append(l_fit.detach().cpu().numpy())
                 self.optimizer.zero_grad()
                 l.backward()
-                if self.grad_clip is not None and self.grad_clip > 0:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
                 self.optimizer.step()
                 b_begin += self.batch_size
                 bar.update(input_batch.shape[0])
@@ -66,4 +61,4 @@ class KBCOptimizer(object):
 
         if self.scheduler is not None:
             self.scheduler.step(np.average(loss_fit_list))
-        return float(np.average(loss_fit_list)) if loss_fit_list else 0.0
+        return l

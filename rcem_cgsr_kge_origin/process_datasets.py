@@ -1,6 +1,5 @@
 import os
 import errno
-import argparse
 from pathlib import Path
 import pickle
 
@@ -8,11 +7,10 @@ import numpy as np
 
 from collections import defaultdict
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_PATH = os.path.normpath(os.path.join(SCRIPT_DIR, "../../data"))
+DATA_PATH = "../data"
 
 # 预处理数据 1 加载原始数据 2 映射实体和关系到ID 3 保存映射文件 4 保存映射后的数据 5 创建过滤列表 6 计算实体概率分布
-def prepare_dataset(path, name, data_path=DATA_PATH):
+def prepare_dataset(path, name):
     """
     Given a path to a folder containing tab separated files :
      train, test, valid
@@ -56,10 +54,10 @@ def prepare_dataset(path, name, data_path=DATA_PATH):
     # 实体的数量
     n_entities = len(entities)
     # 创建data/wn18rr等文件夹
-    os.makedirs(os.path.join(data_path, name), exist_ok=True)
+    os.makedirs(os.path.join(DATA_PATH, name))
 
     for (dic, f) in zip([entities_to_id, relations_to_id], ['ent_id', 'rel_id']):
-        ff = open(os.path.join(data_path, name, f), 'w+')
+        ff = open(os.path.join(DATA_PATH, name, f), 'w+')
         for (x, i) in dic.items():
             ff.write("{}\t{}\n".format(x, i))
         ff.close()
@@ -81,7 +79,7 @@ def prepare_dataset(path, name, data_path=DATA_PATH):
                 continue
         # lhs 为left hand side 实体 rhs 为 right hand side 实体
         # examples是一个列表，里面的每个元素是一个三元组，三元组中的每个元素都是对应的ID,结构为[[lhs_id, rel_id, rhs_id], ...]
-        out = open(Path(data_path) / name / (f + '.pickle'), 'wb')
+        out = open(Path(DATA_PATH) / name / (f + '.pickle'), 'wb')
         pickle.dump(np.array(examples).astype('uint64'), out)
         out.close()
 
@@ -94,7 +92,7 @@ def prepare_dataset(path, name, data_path=DATA_PATH):
     # to_skip_final的结构如下:{''lhs': {(rhs_id, rel_id): [lhs_id1, lhs_id2, ...], ...}, 'rhs': {(lhs_id, rel_id): [rhs_id1, rhs_id2, ...], ...}}
     to_skip = {'lhs': defaultdict(set), 'rhs': defaultdict(set)}
     for f in files:
-        examples = pickle.load(open(Path(data_path) / name / (f + '.pickle'), 'rb'))
+        examples = pickle.load(open(Path(DATA_PATH) / name / (f + '.pickle'), 'rb'))
         for lhs, rel, rhs in examples:
             # 所有的包括训练接测试集和验证集
             # 逆关系，[（头实体，关系）].add(尾实体)
@@ -107,11 +105,11 @@ def prepare_dataset(path, name, data_path=DATA_PATH):
         for k, v in skip.items():
             to_skip_final[kk][k] = sorted(list(v))
 
-    out = open(Path(data_path) / name / 'to_skip.pickle', 'wb')
+    out = open(Path(DATA_PATH) / name / 'to_skip.pickle', 'wb')
     pickle.dump(to_skip_final, out)
     out.close()
 
-    examples = pickle.load(open(Path(data_path) / name / 'train.pickle', 'rb'))
+    examples = pickle.load(open(Path(DATA_PATH) / name / 'train.pickle', 'rb'))
     # 计算实体的概率分布
     counters = {
         'lhs': np.zeros(n_entities),
@@ -129,27 +127,21 @@ def prepare_dataset(path, name, data_path=DATA_PATH):
     for k, v in counters.items():
         counters[k] = v / np.sum(v)
 
-    out = open(Path(data_path) / name / 'probas.pickle', 'wb')
+    out = open(Path(DATA_PATH) / name / 'probas.pickle', 'wb')
     pickle.dump(counters, out)
     out.close()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Prepare tab-separated KG datasets.")
-    parser.add_argument('--src_root', default=os.path.normpath(os.path.join(SCRIPT_DIR, '../../src_data')))
-    parser.add_argument('--out_root', default=DATA_PATH)
-    parser.add_argument('--datasets', nargs='+',
-                        default=['WN18RR', 'FB237', 'YAGO3-10', 'UMLS', 'KINSHIP'])
-    args = parser.parse_args()
-
-    datasets = args.datasets
+    datasets = ['WN18RR', 'FB237', 'YAGO3-10','UMLS','KINSHIP']
     for d in datasets:
         print("Preparing dataset {}".format(d))
         try:
             prepare_dataset(
-                os.path.join(args.src_root, d),
-                d,
-                data_path=args.out_root,
+                os.path.join(
+                    '../src_data', d
+                ),
+                d
             )
         except OSError as e:
             if e.errno == errno.EEXIST:

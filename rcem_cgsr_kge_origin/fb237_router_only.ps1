@@ -1,5 +1,3 @@
-Set-Location $PSScriptRoot
-
 python learn.py --dataset FB237 `
         --model MSDCSE `
         --regularizer NA `

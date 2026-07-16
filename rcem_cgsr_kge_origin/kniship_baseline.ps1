@@ -1,5 +1,3 @@
-Set-Location $PSScriptRoot
-
 python learn.py --dataset KINSHIP `
         --min_lr 0.00001 `
         --model MSDCSE `
@@ -16,3 +14,4 @@ python learn.py --dataset KINSHIP `
         --seed 42 `
         --learning_rate 0.001 `
         -train -id aaa_uml -save
+

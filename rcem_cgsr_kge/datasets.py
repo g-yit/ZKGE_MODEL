@@ -95,14 +95,45 @@ class Dataset(object):
         # 三元组的数量变为了2倍
         return sdata
 
+    def get_multi_positive_train(self):
+        """
+        Group reciprocal training triples by query ``(head, relation)``.
+
+        The returned query tensor keeps one representative tail in its third
+        column so existing model forward/regularizer interfaces remain
+        compatible. ``positive_targets`` contains every known training tail
+        for the corresponding query and is the actual supervision used by the
+        multi-positive softmax loss.
+        """
+        train = self._ensure_train_with_reciprocals().astype('int64')
+        tails_by_query = defaultdict(set)
+        for h, r, t in train:
+            tails_by_query[(int(h), int(r))].add(int(t))
+
+        query_keys = sorted(tails_by_query)
+        queries = np.zeros((len(query_keys), 3), dtype=np.int64)
+        positive_targets = []
+        for i, (h, r) in enumerate(query_keys):
+            tails = np.asarray(
+                sorted(tails_by_query[(h, r)]), dtype=np.int64
+            )
+            queries[i] = (h, r, int(tails[0]))
+            positive_targets.append(torch.from_numpy(tails))
+
+        return torch.from_numpy(queries), positive_targets
+
     def _ensure_train_with_reciprocals(self):
         if not hasattr(self, 'train_with_reciprocals'):
             self.get_train()
         return self.train_with_reciprocals
 
-    def build_relation_context(self):
+    def build_relation_context(self, include_entity_stats=True):
         """
-        Build relation-pattern statistics from training triples only.
+        Build relation and entity structural statistics from training triples only.
+
+        Relation statistics use reciprocal triples because the model predicts both
+        directions. Entity statistics use the original directed training graph so
+        incoming and outgoing roles remain distinguishable.
         """
         train = self._ensure_train_with_reciprocals().astype('int64')
         n_ent = self.n_entities
@@ -168,9 +199,67 @@ class Dataset(object):
             rel_stats[r, 5 + rel_type] = 1.0
             rel_stats[r, 9] = 1.0 if r >= self.real_r else 0.0
 
-        return {
+        context = {
             'rel_stats': torch.from_numpy(rel_stats),
         }
+
+        if include_entity_stats:
+            directed_train = self.data['train'].astype('int64')
+            heads = directed_train[:, 0]
+            rels = directed_train[:, 1]
+            tails = directed_train[:, 2]
+
+            out_degree = np.bincount(heads, minlength=n_ent).astype(np.float32)
+            in_degree = np.bincount(tails, minlength=n_ent).astype(np.float32)
+
+            def role_summary(entity_ids, relation_ids, degree):
+                # Encode (entity, relation) pairs without constructing a dense
+                # n_entity x n_relation matrix.
+                pair_ids = entity_ids * self.real_r + relation_ids
+                unique_pairs, pair_counts = np.unique(pair_ids, return_counts=True)
+                pair_entities = unique_pairs // self.real_r
+
+                diversity = np.bincount(
+                    pair_entities, minlength=n_ent
+                ).astype(np.float32)
+                diversity /= max(float(self.real_r), 1.0)
+
+                pair_counts = pair_counts.astype(np.float32)
+                xlogx = pair_counts * np.log(np.maximum(pair_counts, 1.0))
+                summed_xlogx = np.bincount(
+                    pair_entities, weights=xlogx, minlength=n_ent
+                ).astype(np.float32)
+
+                entropy = np.zeros(n_ent, dtype=np.float32)
+                active = degree > 0
+                entropy[active] = (
+                    np.log(degree[active])
+                    - summed_xlogx[active] / degree[active]
+                ) / np.log(max(self.real_r, 2))
+                return diversity, np.clip(entropy, 0.0, 1.0)
+
+            out_diversity, out_entropy = role_summary(heads, rels, out_degree)
+            in_diversity, in_entropy = role_summary(tails, rels, in_degree)
+
+            def normalized_log_degree(degree):
+                scale = np.log1p(max(float(degree.max()), 1.0))
+                return np.log1p(degree) / scale
+
+            total_degree = out_degree + in_degree
+            role_balance = (out_degree - in_degree) / np.maximum(total_degree, 1.0)
+            entity_stats = np.stack([
+                normalized_log_degree(out_degree),
+                normalized_log_degree(in_degree),
+                out_diversity,
+                in_diversity,
+                out_entropy,
+                in_entropy,
+                normalized_log_degree(total_degree),
+                role_balance,
+            ], axis=1).astype(np.float32)
+            context['entity_stats'] = torch.from_numpy(entity_stats)
+
+        return context
 
     def build_rcem_context(
             self,
@@ -178,6 +267,8 @@ class Dataset(object):
             max_candidates_per_query=32,
             min_rule_support=3,
             max_rule_degree=64,
+            standard_confidence_weight=0.3,
+            rule_smoothing=1.0,
             use_path=True,
             use_type=True,
     ):
@@ -199,6 +290,8 @@ class Dataset(object):
             max_candidates = max(1, int(max_candidates_per_query))
             min_support = max(1, int(min_rule_support))
             max_degree = max(1, int(max_rule_degree))
+            standard_weight = min(max(float(standard_confidence_weight), 0.0), 1.0)
+            smoothing = max(float(rule_smoothing), 1e-6)
 
             out_by_head = defaultdict(list)
             in_by_tail = defaultdict(list)
@@ -220,6 +313,9 @@ class Dataset(object):
                 for h in out_by_rel[r]:
                     out_by_rel[r][h] = sorted(set(out_by_rel[r][h]))[:max_degree]
 
+            # Count positive (h, t) facts explained by each rule. A rule
+            # receives at most one support vote per target triple even if
+            # several intermediate entities instantiate the same body.
             rule_support = [Counter() for _ in range(n_rel)]
             for h, r, t in train:
                 h = int(h); r = int(r); t = int(t)
@@ -232,22 +328,89 @@ class Dataset(object):
                 for r1, mid in left_edges:
                     left_by_mid[mid].append(r1)
 
+                matched_rules = set()
                 for mid, r2 in right_edges:
                     if mid not in left_by_mid:
                         continue
                     for r1 in left_by_mid[mid]:
-                        rule_support[r][(r1, r2)] += 1
+                        matched_rules.add((r1, r2))
+                for rule in matched_rules:
+                    rule_support[r][rule] += 1
 
-            rules_by_rel = []
+            # Preselect by positive support, then compute exact distinct body
+            # support only for a small candidate pool. This keeps confidence
+            # estimation bounded while avoiding a full all-rule enumeration.
+            targets_by_body = defaultdict(list)
+            preselect_limit = max_rules * 4
             for r in range(n_rel):
-                scored_rules = []
-                total = max(float(rel_count[r]), 1.0)
+                candidates = []
                 for (r1, r2), support in rule_support[r].items():
                     if support < min_support:
                         continue
-                    coverage = support / total
-                    score = np.log1p(float(support)) * np.sqrt(max(coverage, 1e-12))
-                    scored_rules.append((score, r1, r2, support))
+                    head_coverage = support / max(float(rel_count[r]), 1.0)
+                    candidates.append((head_coverage, support, r1, r2))
+                candidates.sort(reverse=True)
+                candidates = candidates[:preselect_limit]
+                for _, support, r1, r2 in candidates:
+                    targets_by_body[(r1, r2)].append((r, support))
+
+            # Enumerate candidate rule bodies in one graph pass. Re-running a
+            # full graph traversal for every rule is substantially slower on
+            # datasets with many relations.
+            candidate_bodies = set(targets_by_body)
+            body_support_by_rule = Counter()
+            pca_support_by_rule = Counter()
+            for h, first_edges in out_by_head.items():
+                local_body_tails = defaultdict(set)
+                for r1, mid in first_edges:
+                    for r2, tail in out_by_head.get(mid, []):
+                        body = (r1, r2)
+                        if body in candidate_bodies:
+                            local_body_tails[body].add(tail)
+
+                for body, body_tails in local_body_tails.items():
+                    count = len(body_tails)
+                    body_support_by_rule[body] += count
+                    for target_r, _ in targets_by_body[body]:
+                        if h in out_by_rel[target_r]:
+                            pca_support_by_rule[(body, target_r)] += count
+
+            scored_by_rel = [[] for _ in range(n_rel)]
+            for (r1, r2), target_rules in targets_by_body.items():
+                body = (r1, r2)
+                body_support = body_support_by_rule[body]
+                for target_r, support in target_rules:
+                    pca_body_support = pca_support_by_rule[(body, target_r)]
+                    # Denominators are guarded by support because the bounded
+                    # adjacency views used by positive and body passes differ.
+                    standard_denom = max(float(body_support), float(support))
+                    pca_denom = max(float(pca_body_support), float(support))
+                    standard_confidence = (
+                        float(support) + smoothing
+                    ) / (standard_denom + 2.0 * smoothing)
+                    pca_confidence = (
+                        float(support) + smoothing
+                    ) / (pca_denom + 2.0 * smoothing)
+                    head_coverage = min(
+                        float(support) / max(float(rel_count[target_r]), 1.0),
+                        1.0,
+                    )
+                    confidence = (
+                        standard_weight * standard_confidence
+                        + (1.0 - standard_weight) * pca_confidence
+                    )
+                    quality = (
+                        np.log1p(float(support))
+                        * np.sqrt(max(head_coverage, 1e-12))
+                        * confidence
+                    )
+                    scored_by_rel[target_r].append((
+                        quality, r1, r2, support,
+                        standard_confidence, pca_confidence, head_coverage,
+                    ))
+
+            rules_by_rel = []
+            for scored_rules in scored_by_rel:
                 scored_rules.sort(reverse=True)
                 rules_by_rel.append(scored_rules[:max_rules])
 
@@ -258,38 +421,80 @@ class Dataset(object):
             for target_r, rules in enumerate(rules_by_rel):
                 if not rules:
                     continue
-                for score, r1, r2, _ in rules:
+                for score, r1, r2, _, _, _, _ in rules:
                     first_hops = out_by_rel[r1]
                     if not first_hops:
                         continue
                     for h, mids in first_hops.items():
-                        q_scores = evidence_scores[(h, target_r)]
+                        rule_tail_counts = Counter()
                         for mid in mids:
                             tails = out_by_rel[r2].get(mid, [])
                             for tail in tails:
-                                q_scores[tail] = q_scores.get(tail, 0.0) + float(score)
+                                rule_tail_counts[tail] += 1
+                        if not rule_tail_counts:
+                            continue
+                        q_scores = evidence_scores[(h, target_r)]
+                        for tail, path_count in rule_tail_counts.items():
+                            q_scores[tail] = (
+                                q_scores.get(tail, 0.0)
+                                + float(score) * np.log1p(float(path_count))
+                            )
                         if len(q_scores) > prune_limit:
                             top_items = sorted(q_scores.items(), key=lambda x: x[1], reverse=True)[:keep_limit]
                             evidence_scores[(h, target_r)] = dict(top_items)
+
+            # Relation-level calibration keeps evidence comparable across
+            # queries while bounding additions to [0, 1].
+            relation_score_sum = np.zeros(n_rel, dtype=np.float64)
+            relation_score_count = np.zeros(n_rel, dtype=np.int64)
+            for (_, r), scores in evidence_scores.items():
+                relation_score_sum[r] += sum(scores.values())
+                relation_score_count[r] += len(scores)
+            relation_score_scale = relation_score_sum / np.maximum(
+                relation_score_count, 1
+            )
 
             query_index = np.full((n_ent, n_rel), -1, dtype=np.int64)
             num_queries = len(evidence_scores)
             candidate_ids = np.zeros((num_queries, max_candidates), dtype=np.int64)
             candidate_scores = np.zeros((num_queries, max_candidates), dtype=np.float32)
+            query_features = np.zeros((num_queries, 6), dtype=np.float32)
 
             for idx, ((h, r), scores) in enumerate(evidence_scores.items()):
                 query_index[h, r] = idx
                 top_items = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:max_candidates]
                 if not top_items:
                     continue
-                values = np.array([v for _, v in top_items], dtype=np.float32)
-                values = values / max(float(values.max()), 1e-6)
+                raw_values = np.array([v for _, v in top_items], dtype=np.float32)
+                scale = max(float(relation_score_scale[r]), 1e-6)
+                values = 1.0 - np.exp(-raw_values / scale)
                 candidate_ids[idx, :len(top_items)] = [t for t, _ in top_items]
                 candidate_scores[idx, :len(top_items)] = values
+
+                value_sum = max(float(values.sum()), 1e-8)
+                probabilities = values / value_sum
+                if len(values) > 1:
+                    entropy = -float(np.sum(
+                        probabilities * np.log(probabilities + 1e-12)
+                    )) / np.log(float(len(values)))
+                    concentration = 1.0 - entropy
+                    margin = float(values[0] - values[1])
+                else:
+                    concentration = 1.0
+                    margin = float(values[0])
+                query_features[idx] = [
+                    1.0,
+                    len(values) / float(max_candidates),
+                    float(values[0]),
+                    float(values.mean()),
+                    margin,
+                    concentration,
+                ]
 
             context['path_query_index'] = torch.from_numpy(query_index)
             context['path_candidate_ids'] = torch.from_numpy(candidate_ids)
             context['path_candidate_scores'] = torch.from_numpy(candidate_scores)
+            context['path_query_features'] = torch.from_numpy(query_features)
 
         if use_type:
             role_dim = n_rel * 2
@@ -326,6 +531,32 @@ class Dataset(object):
                     type_scores[r] = 0.0
 
             context['type_scores'] = torch.from_numpy(type_scores)
+
+            # Reliability descriptors for query-aware gating only. The type
+            # evidence construction itself intentionally remains unchanged.
+            encoded_rel_tails = train[:, 1] * n_ent + train[:, 2]
+            unique_rel_tails = np.unique(encoded_rel_tails)
+            unique_tail_rels = unique_rel_tails // n_ent
+            unique_tail_ids = unique_rel_tails % n_ent
+            unique_tail_count = np.bincount(
+                unique_tail_rels, minlength=n_rel
+            ).astype(np.float32)
+            cohesion_sum = np.bincount(
+                unique_tail_rels,
+                weights=type_scores[unique_tail_rels, unique_tail_ids],
+                minlength=n_rel,
+            ).astype(np.float32)
+            cohesion = cohesion_sum / np.maximum(unique_tail_count, 1.0)
+
+            support_scale = np.log1p(max(float(tail_count.max()), 1.0))
+            unique_scale = np.log1p(max(float(unique_tail_count.max()), 1.0))
+            type_reliability = np.stack([
+                np.log1p(tail_count) / support_scale,
+                np.log1p(unique_tail_count) / unique_scale,
+                cohesion,
+                np.std(type_scores, axis=1),
+            ], axis=1).astype(np.float32)
+            context['type_reliability'] = torch.from_numpy(type_reliability)
 
         return context
 

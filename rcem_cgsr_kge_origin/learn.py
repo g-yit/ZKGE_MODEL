@@ -26,7 +26,7 @@ parser.add_argument(
 )
 # 模型选择
 parser.add_argument(
-    '--model', type=str, default='MSDCSE'
+    '--model', type=str, default='CP'
 )
 # 正则化选择
 parser.add_argument(
@@ -80,8 +80,8 @@ parser.add_argument('-test', '--do_test', action='store_true')
 parser.add_argument('-save', '--do_save', action='store_true')
 parser.add_argument('-weight', '--do_ce_weight', action='store_true', default=True)
 parser.add_argument('--no_ce_weight', action='store_true', help='Disable entity-frequency class weights.')
-parser.add_argument('--ce_weight_source', choices=['test', 'train'], default='train',
-                    help='Source split for CE class weights. Train is the leak-free default.')
+parser.add_argument('--ce_weight_source', choices=['test', 'train'], default='test',
+                    help='Source split for CE class weights. Default keeps baseline behavior.')
 parser.add_argument('-path', '--save_path', type=str, default='./logs/')
 parser.add_argument('-id', '--model_id', type=str, default='0')
 parser.add_argument('-ckpt', '--checkpoint', type=str, default='')
@@ -114,10 +114,6 @@ parser.add_argument("--filter_size_list", default=[(1, 5, 1, 2), (3, 3), (1, 9)]
 # Context-guided scale routing
 parser.add_argument("--use_scale_router", action="store_true",
                     help="Enable context-guided scale routing over convolution branches.")
-parser.add_argument("--module_warmup_epochs", default=0, type=int,
-                    help="Epochs during which new modules are identity-preserving.")
-parser.add_argument("--module_ramp_epochs", default=1, type=int,
-                    help="Epochs used to ramp new module strength after warmup.")
 parser.add_argument("--router_hidden", default=0, type=int,
                     help="Hidden size of the scale router; 0 means embedding_dim.")
 parser.add_argument("--router_dropout", default=0.1, type=float)
@@ -128,14 +124,6 @@ parser.add_argument("--router_residual_init", default=0.10, type=float,
                     help="Initial residual strength for branch routing.")
 parser.add_argument("--use_router_residual", action="store_true",
                     help="Use baseline-preserving residual branch gains instead of direct softmax weights.")
-parser.add_argument("--no_router_query_context", action="store_true",
-                    help="Disable query-conditioned scale routing for an ablation.")
-parser.add_argument("--no_router_energy_preserving", action="store_true",
-                    help="Use probability weights instead of energy-preserving branch gains.")
-parser.add_argument("--relation_context_dim", default=0, type=int,
-                    help="Dimension of the shared relation-context representation; 0 means rank.")
-parser.add_argument("--relation_context_hidden", default=0, type=int)
-parser.add_argument("--relation_context_dropout", default=0.10, type=float)
 
 # Relation-conditioned evidence memory
 parser.add_argument("--use_rcem", action="store_true",
@@ -152,10 +140,6 @@ parser.add_argument("--rcem_min_rule_support", default=3, type=int,
                     help="Minimum support for a mined relation composition rule.")
 parser.add_argument("--rcem_max_rule_degree", default=64, type=int,
                     help="Maximum local degree used while mining and applying path rules.")
-parser.add_argument("--rcem_warmup_epochs", default=0, type=int,
-                    help="Epochs during which evidence residuals are disabled.")
-parser.add_argument("--rcem_ramp_epochs", default=5, type=int,
-                    help="Epochs used to ramp evidence residual strength after warmup.")
 parser.add_argument("--rcem_gate_hidden", default=0, type=int,
                     help="Hidden size of evidence gate; 0 means embedding_dim.")
 parser.add_argument("--rcem_gate_dropout", default=0.05, type=float)
@@ -167,16 +151,6 @@ parser.add_argument("--rcem_path_gate_init", default=0.05, type=float,
                     help="Initial relation gate probability for path evidence.")
 parser.add_argument("--rcem_type_gate_init", default=0.05, type=float,
                     help="Initial relation gate probability for type evidence.")
-parser.add_argument("--rcem_no_query_gate", action="store_true",
-                    help="Disable head/query features in the evidence gate for an ablation.")
-parser.add_argument("--rcem_no_candidate_calibrator", action="store_true",
-                    help="Disable the learnable path-candidate calibrator for an ablation.")
-parser.add_argument("--rcem_calibrator_hidden", default=0, type=int)
-parser.add_argument("--rcem_calibrator_strength", default=0.25, type=float)
-parser.add_argument("--rcem_allow_inverse_paths", action="store_true",
-                    help="Allow reciprocal cycles while mining paths; intended only for ablations.")
-parser.add_argument("--grad_clip", default=1.0, type=float,
-                    help="Gradient norm clipping; set <=0 to disable.")
 
 args = parser.parse_args()
 
@@ -194,8 +168,7 @@ if args.do_save:
     with open(os.path.join(save_path, 'config.json'), 'w') as f:
         json.dump(vars(args), f, indent=4)
 
-project_dir = os.path.dirname(os.path.abspath(__file__))
-data_path = os.path.normpath(os.path.join(project_dir, "../../data"))
+data_path = "../data"
 dataset = Dataset(data_path, args.dataset)
 
 import random
@@ -244,7 +217,6 @@ if args.model == 'MSDCSE':
             max_rule_degree=args.rcem_max_rule_degree,
             use_path=not args.rcem_no_path,
             use_type=not args.rcem_no_type,
-            exclude_inverse_paths=not args.rcem_allow_inverse_paths,
         )
     model = MSDCSE(
         num_ent=dataset.get_shape()[0],
@@ -262,35 +234,22 @@ if args.model == 'MSDCSE':
         ce_weight=ce_weight,
         use_scale_router=args.use_scale_router,
         relation_context=relation_context,
-        module_warmup_epochs=args.module_warmup_epochs,
-        module_ramp_epochs=args.module_ramp_epochs,
         router_hidden=args.router_hidden if args.router_hidden > 0 else None,
         router_dropout=args.router_dropout,
         router_temperature=args.router_temperature,
         router_min_branch_weight=args.router_min_branch_weight,
         router_residual=args.use_router_residual,
         router_residual_init=args.router_residual_init,
-        router_use_query_context=not args.no_router_query_context,
-        router_energy_preserving=not args.no_router_energy_preserving,
-        relation_context_dim=args.relation_context_dim if args.relation_context_dim > 0 else None,
-        relation_context_hidden=args.relation_context_hidden if args.relation_context_hidden > 0 else None,
-        relation_context_dropout=args.relation_context_dropout,
         use_rcem=args.use_rcem,
         rcem_context=rcem_context,
         rcem_use_path=not args.rcem_no_path,
         rcem_use_type=not args.rcem_no_type,
-        rcem_warmup_epochs=args.rcem_warmup_epochs,
-        rcem_ramp_epochs=args.rcem_ramp_epochs,
         rcem_gate_hidden=args.rcem_gate_hidden if args.rcem_gate_hidden > 0 else None,
         rcem_gate_dropout=args.rcem_gate_dropout,
         rcem_path_strength=args.rcem_path_strength,
         rcem_type_strength=args.rcem_type_strength,
         rcem_path_gate_init=args.rcem_path_gate_init,
         rcem_type_gate_init=args.rcem_type_gate_init,
-        rcem_use_query_gate=not args.rcem_no_query_gate,
-        rcem_use_candidate_calibrator=not args.rcem_no_candidate_calibrator,
-        rcem_calibrator_hidden=args.rcem_calibrator_hidden if args.rcem_calibrator_hidden > 0 else None,
-        rcem_calibrator_strength=args.rcem_calibrator_strength,
     )
     model.init()
 
@@ -321,7 +280,6 @@ print("Using scheduler:", scheduler)
 optimizer = KBCOptimizer(
     datasets, args.dataset, args.model, model, regularizer, optim_method, args.batch_size,
     args.rank, args.out_size, scheduler=scheduler,
-    grad_clip=args.grad_clip,
 )
 
 
@@ -360,7 +318,7 @@ if args.do_train:
         best_valid_mrr = 0.0
         for e in range(args.max_epochs):
             print("Epoch: {}".format(e + 1))
-            cur_loss = optimizer.epoch(examples, e=e, weight=ce_weight)
+            cur_loss = optimizer.epoch(examples, weight=ce_weight)
 
             if (e + 1) % args.valid == 0:
                 (valid, valid_mrr), (test, test_mrr) = [

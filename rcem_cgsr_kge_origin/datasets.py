@@ -20,10 +20,10 @@ class Dataset(object):
         # self.data['train'] 的内容举例:[[0,0,2], [0,1,3], [1,0,2], [2,2,4]]
 
         print(self.data['train'].shape)
-        # Build the ID universe from all splits.  Structural statistics and
-        # evidence are still computed from training triples only below.
-        all_examples = np.concatenate([self.data[f] for f in ['train', 'valid', 'test']], axis=0)
-        maxis = np.max(all_examples, axis=0)
+        # [[0,0,2], [0,1,3], [1,0,2], [2,2,4]]
+        # [2, 2, 4]
+        # 计算每一列的最大值
+        maxis = np.max(self.data['train'], axis=0)
         # [[0,0,2], [0,1,3], [1,0,2], [2,2,4]] maxis = [2, 2, 4]
         # n_entities 实体的适量
         self.n_entities = int(max(maxis[0], maxis[2]) + 1)
@@ -180,7 +180,6 @@ class Dataset(object):
             max_rule_degree=64,
             use_path=True,
             use_type=True,
-            exclude_inverse_paths=True,
     ):
         """
         Build relation-conditioned evidence memory from training triples only.
@@ -213,21 +212,13 @@ class Dataset(object):
                 out_by_rel[r][h].append(t)
                 rel_count[r] += 1
 
-            # Do not make evidence depend on arbitrary entity/relation IDs.
-            # Retain high-frequency relation edges first, with IDs only as a
-            # deterministic tie breaker.
-            out_by_head_key = lambda edge: (-rel_count[edge[0]], edge[0], edge[1])
-            in_by_tail_key = lambda edge: (-rel_count[edge[1]], edge[1], edge[0])
             for h in out_by_head:
-                out_by_head[h] = sorted(out_by_head[h], key=out_by_head_key)[:max_degree]
+                out_by_head[h] = sorted(out_by_head[h], key=lambda x: (x[0], x[1]))[:max_degree]
             for t in in_by_tail:
-                in_by_tail[t] = sorted(in_by_tail[t], key=in_by_tail_key)[:max_degree]
+                in_by_tail[t] = sorted(in_by_tail[t], key=lambda x: (x[0], x[1]))[:max_degree]
             for r in range(n_rel):
                 for h in out_by_rel[r]:
-                    out_by_rel[r][h] = sorted(
-                        set(out_by_rel[r][h]),
-                        key=lambda tail: (tail,)
-                    )[:max_degree]
+                    out_by_rel[r][h] = sorted(set(out_by_rel[r][h]))[:max_degree]
 
             rule_support = [Counter() for _ in range(n_rel)]
             for h, r, t in train:
@@ -245,12 +236,6 @@ class Dataset(object):
                     if mid not in left_by_mid:
                         continue
                     for r1 in left_by_mid[mid]:
-                        if exclude_inverse_paths:
-                            r1_inverse = r1 + self.real_r if r1 < self.real_r else r1 - self.real_r
-                            if r2 == r1_inverse:
-                                # Exclude trivial r + r^{-1} cycles introduced
-                                # by reciprocal augmentation.
-                                continue
                         rule_support[r][(r1, r2)] += 1
 
             rules_by_rel = []
